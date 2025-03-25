@@ -11,7 +11,7 @@ class CustomNavBar extends StatelessWidget {
     super.key, 
     required this.currentIndex, 
     required this.onTap,
-    this.translucent = false,
+    this.translucent = true,
   });
 
   @override
@@ -23,19 +23,20 @@ class CustomNavBar extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         color: translucent 
-            ? Colors.black.withOpacity(0.5) 
+            ? Colors.black.withOpacity(0.2) 
             : AppTheme.backgroundColor,
-        border: Border(
-          top: BorderSide(
-            color: Colors.white.withOpacity(0.08),
-            width: 1,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            spreadRadius: 0,
           ),
-        ),
+        ],
       ),
       child: translucent
           ? ClipRect(
               child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
                 child: _buildNavContent(context),
               ),
             )
@@ -44,53 +45,75 @@ class CustomNavBar extends StatelessWidget {
   }
 
   Widget _buildNavContent(BuildContext context) {
-    return SafeArea(
-      top: false,
-      child: SizedBox(
-        height: 64,
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceAround,
-          children: [
-            _buildNavItem(context, 0, Icons.dashboard_outlined, Icons.dashboard, "Home"),
-            _buildNavItem(context, 1, Icons.fitness_center_outlined, Icons.fitness_center, "Workout"),
-            _buildNavItem(context, 2, Icons.restaurant_outlined, Icons.restaurant, "Nutrition"),
-            _buildNavItem(context, 3, Icons.trending_up_outlined, Icons.trending_up, "Progress"),
-            _buildNavItem(context, 4, Icons.chat_bubble_outline, Icons.chat_bubble, "Chat"),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildNavItem(BuildContext context, int index, IconData icon, IconData activeIcon, String label) {
-    final isSelected = currentIndex == index;
+    final navItems = [
+      (icon: Icons.dashboard_outlined, activeIcon: Icons.dashboard, label: "Home"),
+      (icon: Icons.fitness_center_outlined, activeIcon: Icons.fitness_center, label: "Workout"),
+      (icon: Icons.restaurant_outlined, activeIcon: Icons.restaurant, label: "Nutrition"),
+      (icon: Icons.trending_up_outlined, activeIcon: Icons.trending_up, label: "Progress"),
+    ];
     
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: () => onTap(index),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              isSelected ? activeIcon : icon,
-              color: isSelected ? AppTheme.primaryColor : AppTheme.textSecondary,
-              size: 24,
-            ),
-            const SizedBox(height: 4),
-            Text(
-              label,
-              style: TextStyle(
-                color: isSelected ? AppTheme.primaryColor : AppTheme.textSecondary,
-                fontSize: 12,
-                fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-              ),
-              overflow: TextOverflow.ellipsis,
-            ),
-          ],
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        NavigationBar(
+          selectedIndex: currentIndex == 4 ? 0 : currentIndex,
+          onDestinationSelected: (index) {
+            if (index >= navItems.length) return;
+            onTap(index);
+          },
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          height: 70,
+          labelBehavior: NavigationDestinationLabelBehavior.onlyShowSelected,
+          destinations: navItems.map((item) => 
+            NavigationDestination(
+              icon: Icon(item.icon, color: Colors.white70),
+              selectedIcon: Icon(item.activeIcon, color: AppTheme.primaryColor),
+              label: item.label,
+            )
+          ).toList(),
         ),
-      ),
+        Positioned(
+          top: 5,
+          child: GestureDetector(
+            onTap: () {
+              Navigator.of(context).pushNamed(
+                '/chat',
+                arguments: context,
+              );
+            },
+            child: Container(
+              width: 50,
+              height: 50,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: currentIndex == 4 
+                    ? AppTheme.primaryColor 
+                    : AppTheme.backgroundColor,
+                border: Border.all(
+                  color: AppTheme.primaryColor,
+                  width: 2,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: AppTheme.primaryColor.withOpacity(0.3),
+                    blurRadius: 8,
+                    spreadRadius: 0,
+                  ),
+                ],
+              ),
+              child: Center(
+                child: Image.asset(
+                  'assets/icons/gemini.png',
+                  width: 28,
+                  height: 28,
+                  color: currentIndex == 4 ? Colors.white : AppTheme.primaryColor,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 } 

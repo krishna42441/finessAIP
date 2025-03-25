@@ -4,6 +4,9 @@ import 'dart:ui';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../theme/app_theme.dart';
 import '../main.dart';
+import 'edit_profile_screen.dart';
+import '../utils/onboarding_helper.dart';
+import '../services/gemini_service.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -13,10 +16,8 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
-  final _formKey = GlobalKey<FormState>();
   bool _isLoading = true;
-  bool _isEditing = false;
-  bool _isSaving = false;
+  bool _isProfileComplete = false;
   String? _errorMessage;
   
   // User profile data
@@ -30,6 +31,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   final TextEditingController _weeklyExerciseDaysController = TextEditingController();
   bool _previousProgramExperience = false;
   String _primaryFitnessGoal = 'Weight loss';
+  double _goalProgress = 0.0;
   final TextEditingController _specificTargetsController = TextEditingController();
   final TextEditingController _motivationController = TextEditingController();
   Map<String, dynamic> _workoutPreferences = {};
@@ -141,6 +143,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
           _progressPhotoUrl = response['progress_photo_url'];
           _aiSuggestionsEnabled = response['ai_suggestions_enabled'] ?? true;
           _additionalNotesController.text = response['additional_notes'] ?? '';
+          
+          // Mock goal progress - in real app, calculate based on actual progress
+          _goalProgress = 0.65;
+          
+          // Check if profile is complete
+          checkProfileCompletion();
         });
       }
     } catch (e) {
@@ -154,41 +162,69 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
-  Future<void> _saveProfile() async {
-    if (!_formKey.currentState!.validate()) {
-      return;
-    }
+  void checkProfileCompletion() {
+    // Check if essential fields are filled
+    final bool hasName = _fullNameController.text.isNotEmpty;
+    final bool hasAge = _ageController.text.isNotEmpty;
+    final bool hasGender = _gender.isNotEmpty;
+    final bool hasHeight = _heightController.text.isNotEmpty;
+    final bool hasWeight = _weightController.text.isNotEmpty;
+    final bool hasGoal = _primaryFitnessGoal.isNotEmpty;
 
     setState(() {
-      _isSaving = true;
-      _errorMessage = null;
+      _isProfileComplete = hasName && hasAge && hasGender && hasHeight && hasWeight && hasGoal;
     });
+    
+    // If profile is incomplete, show a banner
+    if (!_isProfileComplete && mounted) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        ScaffoldMessenger.of(context).showMaterialBanner(
+          MaterialBanner(
+            padding: const EdgeInsets.all(16),
+            content: const Text(
+              'Please complete your profile to get personalized fitness and nutrition plans',
+            ),
+            leading: const Icon(Icons.info_outline),
+            backgroundColor: Theme.of(context).colorScheme.secondary.withOpacity(0.2),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  ScaffoldMessenger.of(context).hideCurrentMaterialBanner();
+                  _navigateToEditProfile();
+                },
+                child: const Text('COMPLETE NOW'),
+              ),
+              TextButton(
+                onPressed: () {
+                  ScaffoldMessenger.of(context).hideCurrentMaterialBanner();
+                },
+                child: const Text('DISMISS'),
+              ),
+            ],
+          ),
+        );
+      });
+    }
+  }
 
-    try {
-      // Get current user ID
-      final userId = supabase.auth.currentUser?.id;
-      if (userId == null) {
-        throw Exception('User not authenticated');
-      }
-
-      // Prepare data for update
-      final data = {
-        'user_id': userId,
+  void _navigateToEditProfile() async {
+    Map<String, dynamic> profileData = {
         'full_name': _fullNameController.text,
-        'age': _ageController.text.isNotEmpty ? int.parse(_ageController.text) : null,
+      'email': _emailController.text,
+      'age': _ageController.text.isNotEmpty ? int.tryParse(_ageController.text) : null,
         'gender': _gender,
-        'height_cm': _heightController.text.isNotEmpty ? double.parse(_heightController.text) : null,
-        'weight_kg': _weightController.text.isNotEmpty ? double.parse(_weightController.text) : null,
+      'height_cm': _heightController.text.isNotEmpty ? double.tryParse(_heightController.text) : null,
+      'weight_kg': _weightController.text.isNotEmpty ? double.tryParse(_weightController.text) : null,
         'fitness_level': _fitnessLevel,
-        'weekly_exercise_days': _weeklyExerciseDaysController.text.isNotEmpty ? int.parse(_weeklyExerciseDaysController.text) : null,
+      'weekly_exercise_days': _weeklyExerciseDaysController.text.isNotEmpty ? int.tryParse(_weeklyExerciseDaysController.text) : null,
         'previous_program_experience': _previousProgramExperience,
         'primary_fitness_goal': _primaryFitnessGoal,
         'specific_targets': _specificTargetsController.text,
         'motivation': _motivationController.text,
         'workout_preferences': _workoutPreferences,
         'indoor_outdoor_preference': _indoorOutdoorPreference,
-        'workout_days_per_week': _workoutDaysPerWeekController.text.isNotEmpty ? int.parse(_workoutDaysPerWeekController.text) : null,
-        'workout_minutes_per_session': _workoutMinutesPerSessionController.text.isNotEmpty ? int.parse(_workoutMinutesPerSessionController.text) : null,
+      'workout_days_per_week': _workoutDaysPerWeekController.text.isNotEmpty ? int.tryParse(_workoutDaysPerWeekController.text) : null,
+      'workout_minutes_per_session': _workoutMinutesPerSessionController.text.isNotEmpty ? int.tryParse(_workoutMinutesPerSessionController.text) : null,
         'equipment_access': _equipmentAccessController.text,
         'dietary_restrictions': _dietaryRestrictions,
         'eating_habits': _eatingHabitsController.text,
@@ -198,589 +234,309 @@ class _ProfileScreenState extends State<ProfileScreen> {
         'medications': _medicationsController.text,
         'fitness_concerns': _fitnessConcernsController.text,
         'daily_activity_level': _dailyActivityLevel,
-        'sleep_hours': _sleepHoursController.text.isNotEmpty ? int.parse(_sleepHoursController.text) : null,
+      'sleep_hours': _sleepHoursController.text.isNotEmpty ? int.tryParse(_sleepHoursController.text) : null,
         'stress_level': _stressLevel,
         'progress_photo_url': _progressPhotoUrl,
         'ai_suggestions_enabled': _aiSuggestionsEnabled,
         'additional_notes': _additionalNotesController.text,
-        'updated_at': DateTime.now().toIso8601String(),
-      };
-
-      // Check if profile exists
-      final exists = await supabase
-          .from('user_profiles')
-          .select('id')
-          .eq('user_id', userId)
-          .maybeSingle();
-
-      if (exists == null) {
-        // Insert new profile
-        await supabase
-            .from('user_profiles')
-            .insert(data);
-      } else {
-        // Update existing profile
-        await supabase
-            .from('user_profiles')
-            .update(data)
-            .eq('user_id', userId);
-      }
-
-      // Update user's full name in auth metadata
-      await supabase.auth.updateUser(
-        UserAttributes(
-          data: {'full_name': _fullNameController.text},
-        ),
-      );
-
-      setState(() {
-        _isEditing = false;
-      });
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Profile updated successfully')),
-        );
-      }
-    } catch (e) {
-      setState(() {
-        _errorMessage = 'Error saving profile: ${e.toString()}';
-      });
-    } finally {
-      setState(() {
-        _isSaving = false;
-      });
+    };
+    
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => EditProfileScreen(profileData: profileData),
+      ),
+    );
+    
+    // If profile was updated, reload the data
+    if (result == true) {
+      _loadUserProfile();
     }
+  }
+
+  void _showFullScreenImage() {
+    if (_progressPhotoUrl == null) return;
+    
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => Scaffold(
+          appBar: AppBar(
+            backgroundColor: Colors.black,
+            iconTheme: const IconThemeData(color: Colors.white),
+          ),
+          backgroundColor: Colors.black,
+          body: Center(
+            child: InteractiveViewer(
+              minScale: 0.5,
+              maxScale: 4.0,
+              child: Image.network(
+                _progressPhotoUrl!,
+                fit: BoxFit.contain,
+                loadingBuilder: (context, child, loadingProgress) {
+                  if (loadingProgress == null) return child;
+                  return Center(
+                    child: CircularProgressIndicator(
+                      value: loadingProgress.expectedTotalBytes != null
+                          ? loadingProgress.cumulativeBytesLoaded /
+                              loadingProgress.expectedTotalBytes!
+                          : null,
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: AppTheme.backgroundColor,
       appBar: AppBar(
-        title: const Text('Your Profile'),
-        elevation: 0,
+        title: const Text('Profile'),
+        scrolledUnderElevation: 0,
         actions: [
-          if (!_isEditing)
-            IconButton(
-              icon: const Icon(Icons.edit),
-              onPressed: () {
-                setState(() {
-                  _isEditing = true;
-                });
-              },
-            )
-          else
-            IconButton(
-              icon: const Icon(Icons.close),
-              onPressed: () {
-                setState(() {
-                  _isEditing = false;
-                });
-                _loadUserProfile();
-              },
-            ),
+          IconButton(
+            onPressed: () {
+              _navigateToEditProfile();
+            },
+            icon: const Icon(Icons.edit),
+            tooltip: 'Edit Profile',
+          ),
         ],
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : Stack(
-              children: [
-                Container(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [
-                        AppTheme.primaryColor.withOpacity(0.2),
-                        AppTheme.backgroundColor,
-                      ],
-                      stops: const [0.0, 0.3],
-                    ),
+      body: _isLoading 
+        ? const Center(child: CircularProgressIndicator())
+        : RefreshIndicator(
+            onRefresh: _loadUserProfile,
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildProfileHeader(),
+                  const SizedBox(height: 16),
+                  _buildProfileSections(),
+                  const SizedBox(height: 24),
+                  OutlinedButton.icon(
+                    onPressed: _signOut,
+                    icon: const Icon(Icons.logout),
+                    label: const Text('Sign Out'),
                   ),
-                ),
-                Form(
-                  key: _formKey,
-                  child: ListView(
-                    padding: const EdgeInsets.all(16.0),
-                    children: [
-                      if (_errorMessage != null)
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 16.0),
-                          child: Text(
-                            _errorMessage!,
-                            style: TextStyle(color: Colors.red[300]),
-                          ),
-                        ),
-                      
-                      // Profile photo
-                      Center(
-                        child: Stack(
-                          children: [
-                            CircleAvatar(
-                              radius: 50,
-                              backgroundColor: AppTheme.cardColor,
-                              backgroundImage: _progressPhotoUrl != null
-                                  ? NetworkImage(_progressPhotoUrl!)
-                                  : null,
-                              child: _progressPhotoUrl == null
-                                  ? const Icon(Icons.person, size: 50)
-                                  : null,
-                            ),
-                            if (_isEditing)
-                              Positioned(
-                                right: 0,
-                                bottom: 0,
-                                child: CircleAvatar(
-                                  backgroundColor: AppTheme.primaryColor,
-                                  radius: 18,
-                                  child: IconButton(
-                                    icon: const Icon(Icons.camera_alt, size: 18),
-                                    color: Colors.white,
-                                    onPressed: () {
-                                      // TODO: Implement photo upload
-                                    },
-                                  ),
-                                ),
-                              ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 24),
-                      
-                      // Basic Information Section
-                      _buildSectionTitle('Basic Information'),
-                      
-                      _buildTextField(
-                        label: 'Full Name',
-                        controller: _fullNameController,
-                        enabled: _isEditing,
-                        validator: (value) => value == null || value.isEmpty ? 'Please enter your name' : null,
-                      ),
-                      
-                      _buildTextField(
-                        label: 'Email',
-                        controller: _emailController,
-                        enabled: false, // Email is not editable
-                        keyboardType: TextInputType.emailAddress,
-                      ),
-                      
-                      _buildTextField(
-                        label: 'Age',
-                        controller: _ageController,
-                        enabled: _isEditing,
-                        keyboardType: TextInputType.number,
-                        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                      ),
-                      
-                      _buildDropdown(
-                        label: 'Gender',
-                        value: _gender,
-                        items: _genderOptions,
-                        onChanged: _isEditing
-                            ? (value) {
-                                if (value != null) {
-                                  setState(() {
-                                    _gender = value;
-                                  });
-                                }
-                              }
-                            : null,
-                      ),
-                      
-                      _buildTextField(
-                        label: 'Height (cm)',
-                        controller: _heightController,
-                        enabled: _isEditing,
-                        keyboardType: TextInputType.number,
-                        inputFormatters: [
-                          FilteringTextInputFormatter.allow(RegExp(r'^\d+\.?\d{0,2}')),
-                        ],
-                      ),
-                      
-                      _buildTextField(
-                        label: 'Weight (kg)',
-                        controller: _weightController,
-                        enabled: _isEditing,
-                        keyboardType: TextInputType.number,
-                        inputFormatters: [
-                          FilteringTextInputFormatter.allow(RegExp(r'^\d+\.?\d{0,2}')),
-                        ],
-                      ),
-                      
-                      // Fitness Background Section
-                      _buildSectionTitle('Fitness Background'),
-                      
-                      _buildDropdown(
-                        label: 'Fitness Level',
-                        value: _fitnessLevel,
-                        items: _fitnessLevels,
-                        onChanged: _isEditing
-                            ? (value) {
-                                if (value != null) {
-                                  setState(() {
-                                    _fitnessLevel = value;
-                                  });
-                                }
-                              }
-                            : null,
-                      ),
-                      
-                      _buildTextField(
-                        label: 'Weekly Exercise Days',
-                        controller: _weeklyExerciseDaysController,
-                        enabled: _isEditing,
-                        keyboardType: TextInputType.number,
-                        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                      ),
-                      
-                      _buildSwitch(
-                        label: 'Previous Program Experience',
-                        value: _previousProgramExperience,
-                        onChanged: _isEditing
-                            ? (value) {
-                                setState(() {
-                                  _previousProgramExperience = value;
-                                });
-                              }
-                            : null,
-                      ),
-                      
-                      // Goals Section
-                      _buildSectionTitle('Goals'),
-                      
-                      _buildDropdown(
-                        label: 'Primary Fitness Goal',
-                        value: _primaryFitnessGoal,
-                        items: _fitnessGoals,
-                        onChanged: _isEditing
-                            ? (value) {
-                                if (value != null) {
-                                  setState(() {
-                                    _primaryFitnessGoal = value;
-                                  });
-                                }
-                              }
-                            : null,
-                      ),
-                      
-                      _buildTextField(
-                        label: 'Specific Target Areas',
-                        controller: _specificTargetsController,
-                        enabled: _isEditing,
-                        maxLines: 2,
-                      ),
-                      
-                      _buildTextField(
-                        label: 'Motivation',
-                        controller: _motivationController,
-                        enabled: _isEditing,
-                        maxLines: 2,
-                      ),
-                      
-                      // Workout Preferences Section
-                      _buildSectionTitle('Workout Preferences'),
-                      
-                      _buildDropdown(
-                        label: 'Indoor/Outdoor Preference',
-                        value: _indoorOutdoorPreference,
-                        items: _locationPreferences,
-                        onChanged: _isEditing
-                            ? (value) {
-                                if (value != null) {
-                                  setState(() {
-                                    _indoorOutdoorPreference = value;
-                                  });
-                                }
-                              }
-                            : null,
-                      ),
-                      
-                      _buildTextField(
-                        label: 'Workout Days Per Week',
-                        controller: _workoutDaysPerWeekController,
-                        enabled: _isEditing,
-                        keyboardType: TextInputType.number,
-                        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                      ),
-                      
-                      _buildTextField(
-                        label: 'Workout Minutes Per Session',
-                        controller: _workoutMinutesPerSessionController,
-                        enabled: _isEditing,
-                        keyboardType: TextInputType.number,
-                        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                      ),
-                      
-                      _buildTextField(
-                        label: 'Equipment Access',
-                        controller: _equipmentAccessController,
-                        enabled: _isEditing,
-                        maxLines: 2,
-                      ),
-                      
-                      // Nutrition Section
-                      _buildSectionTitle('Nutrition'),
-                      
-                      _buildTextField(
-                        label: 'Eating Habits',
-                        controller: _eatingHabitsController,
-                        enabled: _isEditing,
-                        maxLines: 2,
-                      ),
-                      
-                      _buildTextField(
-                        label: 'Favorite Foods',
-                        controller: _favoriteFoodsController,
-                        enabled: _isEditing,
-                        maxLines: 2,
-                      ),
-                      
-                      _buildTextField(
-                        label: 'Avoided Foods',
-                        controller: _avoidedFoodsController,
-                        enabled: _isEditing,
-                        maxLines: 2,
-                      ),
-                      
-                      // Health Considerations Section
-                      _buildSectionTitle('Health Considerations'),
-                      
-                      _buildTextField(
-                        label: 'Medications',
-                        controller: _medicationsController,
-                        enabled: _isEditing,
-                        maxLines: 2,
-                      ),
-                      
-                      _buildTextField(
-                        label: 'Fitness Concerns',
-                        controller: _fitnessConcernsController,
-                        enabled: _isEditing,
-                        maxLines: 2,
-                      ),
-                      
-                      _buildDropdown(
-                        label: 'Daily Activity Level',
-                        value: _dailyActivityLevel,
-                        items: _activityLevels,
-                        onChanged: _isEditing
-                            ? (value) {
-                                if (value != null) {
-                                  setState(() {
-                                    _dailyActivityLevel = value;
-                                  });
-                                }
-                              }
-                            : null,
-                      ),
-                      
-                      _buildTextField(
-                        label: 'Sleep Hours',
-                        controller: _sleepHoursController,
-                        enabled: _isEditing,
-                        keyboardType: TextInputType.number,
-                        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                      ),
-                      
-                      _buildDropdown(
-                        label: 'Stress Level',
-                        value: _stressLevel,
-                        items: _stressLevels,
-                        onChanged: _isEditing
-                            ? (value) {
-                                if (value != null) {
-                                  setState(() {
-                                    _stressLevel = value;
-                                  });
-                                }
-                              }
-                            : null,
-                      ),
-                      
-                      // Additional Information Section
-                      _buildSectionTitle('Additional Information'),
-                      
-                      _buildSwitch(
-                        label: 'AI Suggestions Enabled',
-                        value: _aiSuggestionsEnabled,
-                        onChanged: _isEditing
-                            ? (value) {
-                                setState(() {
-                                  _aiSuggestionsEnabled = value;
-                                });
-                              }
-                            : null,
-                      ),
-                      
-                      _buildTextField(
-                        label: 'Additional Notes',
-                        controller: _additionalNotesController,
-                        enabled: _isEditing,
-                        maxLines: 3,
-                      ),
-                      
-                      const SizedBox(height: 32),
-                      
-                      if (_isEditing)
-                        _isSaving
-                            ? const Center(child: CircularProgressIndicator())
-                            : ElevatedButton(
-                                onPressed: _saveProfile,
-                                style: ElevatedButton.styleFrom(
-                                  padding: const EdgeInsets.symmetric(vertical: 16),
-                                  backgroundColor: AppTheme.primaryColor,
-                                ),
-                                child: const Text('Save Profile'),
-                              ),
-                      
-                      const SizedBox(height: 24),
-                    ],
-                  ),
-                ),
-              ],
+                ],
+              ),
             ),
+          ),
     );
   }
 
-  Widget _buildSectionTitle(String title) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 16.0),
+  Widget _buildProfileHeader() {
+    return Card(
+      elevation: 0,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            // Profile picture
+            CircleAvatar(
+              radius: 48,
+              backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+              child: Icon(
+                Icons.person,
+                size: 48,
+                color: Theme.of(context).colorScheme.onPrimaryContainer,
+              ),
+            ),
+            const SizedBox(height: 16),
+            // Name
+            Text(
+              _fullNameController.text.isNotEmpty 
+                  ? _fullNameController.text 
+                  : 'Add your name',
+              style: Theme.of(context).textTheme.titleLarge,
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 4),
+            // Email
+            Text(
+              _emailController.text,
+              style: Theme.of(context).textTheme.bodyMedium,
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 16),
+            // Profile completion
+            _buildProfileCompletionIndicator(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildProfileCompletionIndicator() {
+    final completionPercentage = _isProfileComplete ? 100 : (checkCompletionPercentage() * 100).round();
+    
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              'Profile Completion',
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+            Text(
+              '$completionPercentage%',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        LinearProgressIndicator(
+          value: completionPercentage / 100,
+          backgroundColor: Theme.of(context).colorScheme.surfaceVariant,
+          color: Theme.of(context).colorScheme.primary,
+        ),
+        if (!_isProfileComplete) ...[
+          const SizedBox(height: 12),
+          FilledButton.icon(
+            onPressed: _navigateToEditProfile,
+            icon: const Icon(Icons.edit),
+            label: const Text('Complete Profile'),
+            style: FilledButton.styleFrom(
+              minimumSize: const Size(double.infinity, 40),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildProfileSections() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildSection('Personal Information', _buildPersonalInfoItems()),
+        const SizedBox(height: 16),
+        _buildSection('Fitness Goals', _buildFitnessGoalsItems()),
+        const SizedBox(height: 16),
+        _buildSection('Workout Preferences', _buildWorkoutPreferencesItems()),
+        const SizedBox(height: 16),
+        _buildSection('Health Information', _buildHealthInfoItems()),
+        const SizedBox(height: 16),
+        _buildSection('App Settings', _buildSettingsItems()),
+      ],
+    );
+  }
+
+  Widget _buildSection(String title, List<Widget> items) {
+    return Card(
+      elevation: 0,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            title,
-            style: const TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              color: AppTheme.primaryColor,
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+            child: Text(
+              title,
+              style: Theme.of(context).textTheme.titleMedium,
             ),
           ),
           const Divider(),
+          ...items,
         ],
       ),
     );
   }
 
-  Widget _buildTextField({
-    required String label,
-    required TextEditingController controller,
-    bool enabled = true,
-    TextInputType keyboardType = TextInputType.text,
-    List<TextInputFormatter>? inputFormatters,
-    String? Function(String?)? validator,
-    int maxLines = 1,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 16.0),
-      child: TextFormField(
-        controller: controller,
-        enabled: enabled,
-        keyboardType: keyboardType,
-        inputFormatters: inputFormatters,
-        validator: validator,
-        maxLines: maxLines,
-        decoration: InputDecoration(
-          labelText: label,
-          filled: true,
-          fillColor: enabled ? AppTheme.cardColor.withOpacity(0.5) : AppTheme.cardColor.withOpacity(0.3),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide.none,
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide(
-              color: AppTheme.primaryColor.withOpacity(0.3),
-              width: 1.0,
-            ),
-          ),
-          disabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide.none,
-          ),
-        ),
-        style: TextStyle(
-          color: enabled ? Colors.white : Colors.white70,
+  double checkCompletionPercentage() {
+    int totalFields = 7;
+    int completedFields = 0;
+    
+    if (_fullNameController.text.isNotEmpty) completedFields++;
+    if (_ageController.text.isNotEmpty) completedFields++;
+    if (_gender.isNotEmpty) completedFields++;
+    if (_heightController.text.isNotEmpty) completedFields++;
+    if (_weightController.text.isNotEmpty) completedFields++;
+    if (_primaryFitnessGoal.isNotEmpty) completedFields++;
+    if (_fitnessLevel.isNotEmpty) completedFields++;
+    
+    return completedFields / totalFields;
+  }
+
+  List<Widget> _buildPersonalInfoItems() {
+    return [
+      _buildInfoItem('Age', _ageController.text),
+      _buildInfoItem('Height', '${_heightController.text} cm'),
+      _buildInfoItem('Weight', '${_weightController.text} kg'),
+    ];
+  }
+
+  List<Widget> _buildFitnessGoalsItems() {
+    return [
+      _buildInfoItem('Fitness Level', _fitnessLevel),
+      _buildInfoItem('Workout Days', _workoutDaysPerWeekController.text.isEmpty ? '---' : _workoutDaysPerWeekController.text),
+      _buildInfoItem('Goal', _primaryFitnessGoal),
+      _buildInfoItem('Target Areas', _specificTargetsController.text.isEmpty ? '---' : _specificTargetsController.text),
+      _buildInfoItem('Equipment', _equipmentAccessController.text.isEmpty ? '---' : _equipmentAccessController.text),
+    ];
+  }
+
+  List<Widget> _buildWorkoutPreferencesItems() {
+    return [
+      _buildInfoItem('Workout Days per Week', _workoutDaysPerWeekController.text.isEmpty ? '---' : _workoutDaysPerWeekController.text),
+      _buildInfoItem('Workout Minutes per Session', _workoutMinutesPerSessionController.text.isEmpty ? '---' : _workoutMinutesPerSessionController.text),
+      _buildInfoItem('Indoor/Outdoor Preference', _indoorOutdoorPreference),
+    ];
+  }
+
+  List<Widget> _buildHealthInfoItems() {
+    return [
+      _buildInfoItem('Activity Level', _dailyActivityLevel),
+      _buildInfoItem('Sleep Hours', _sleepHoursController.text.isEmpty ? '---' : '${_sleepHoursController.text} hours per night'),
+      _buildInfoItem('Stress Level', _stressLevel),
+    ];
+  }
+
+  List<Widget> _buildSettingsItems() {
+    return [
+      _buildInfoItem('Eating Habits', _eatingHabitsController.text.isEmpty ? '---' : _eatingHabitsController.text),
+      _buildInfoItem('Favorite Foods', _favoriteFoodsController.text.isEmpty ? '---' : _favoriteFoodsController.text),
+      _buildInfoItem('Avoided Foods', _avoidedFoodsController.text.isEmpty ? '---' : _avoidedFoodsController.text),
+      _buildInfoItem('Medications', _medicationsController.text.isEmpty ? '---' : _medicationsController.text),
+      _buildInfoItem('Fitness Concerns', _fitnessConcernsController.text.isEmpty ? '---' : _fitnessConcernsController.text),
+    ];
+  }
+
+  Widget _buildInfoItem(String label, String value) {
+    return ListTile(
+      leading: Text(
+        label,
+        style: Theme.of(context).textTheme.bodyMedium,
+      ),
+      title: Text(
+        value.isEmpty ? '---' : value,
+        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+          fontWeight: FontWeight.w600,
         ),
       ),
     );
   }
 
-  Widget _buildDropdown({
-    required String label,
-    required String value,
-    required List<String> items,
-    Function(String?)? onChanged,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 16.0),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 5.0, sigmaY: 5.0),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16.0),
-            decoration: BoxDecoration(
-              color: onChanged != null 
-                  ? AppTheme.cardColor.withOpacity(0.5) 
-                  : AppTheme.cardColor.withOpacity(0.3),
-              borderRadius: BorderRadius.circular(12),
-              border: onChanged != null
-                  ? Border.all(
-                      color: AppTheme.primaryColor.withOpacity(0.3),
-                      width: 1.0,
-                    )
-                  : null,
-            ),
-            child: DropdownButtonFormField<String>(
-              value: value,
-              onChanged: onChanged,
-              items: items.map((String item) {
-                return DropdownMenuItem<String>(
-                  value: item,
-                  child: Text(item),
-                );
-              }).toList(),
-              decoration: InputDecoration(
-                labelText: label,
-                border: InputBorder.none,
-              ),
-              style: TextStyle(
-                color: onChanged != null ? Colors.white : Colors.white70,
-              ),
-              dropdownColor: AppTheme.cardColor,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSwitch({
-    required String label,
-    required bool value,
-    Function(bool)? onChanged,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 16.0),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 16,
-              color: onChanged != null ? Colors.white : Colors.white70,
-            ),
-          ),
-          Switch(
-            value: value,
-            onChanged: onChanged,
-            activeColor: AppTheme.primaryColor,
-          ),
-        ],
-      ),
-    );
+  Future<void> _signOut() async {
+    try {
+      await supabase.auth.signOut();
+      Navigator.pushReplacementNamed(context, '/login');
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error signing out: ${e.toString()}')),
+      );
+    }
   }
 } 

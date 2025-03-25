@@ -2,7 +2,11 @@ import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../widgets/custom_nav_bar.dart';
 import '../widgets/ui_components.dart';
+import '../widgets/quick_log_widgets.dart';
+import '../utils/onboarding_helper.dart';
 import 'chat_screen.dart';
+import 'package:flutter/rendering.dart';
+import 'dart:ui';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -15,108 +19,111 @@ class _HomeScreenState extends State<HomeScreen> {
   int _selectedIndex = 0;
 
   @override
+  void initState() {
+    super.initState();
+    // Check onboarding status after first frame is rendered
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      OnboardingHelper.showOnboardingNotificationIfNeeded(context);
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    
     return Scaffold(
       backgroundColor: AppTheme.backgroundColor,
-      body: Stack(
-        children: [
-          // Gradient background
-          Container(
-            decoration: AppTheme.gradientBackground(),
-          ),
-          
-          // Main content
-          SafeArea(
-            child: CustomScrollView(
-              slivers: [
-                // App Bar
-                SliverAppBar(
-                  backgroundColor: Colors.transparent,
-                  expandedHeight: 120,
-                  pinned: true,
-                  elevation: 0,
-                  flexibleSpace: FlexibleSpaceBar(
-                    title: Text(
-                      'Dashboard',
-                      style: Theme.of(context).textTheme.headlineSmall,
+      body: SafeArea(
+        child: CustomScrollView(
+          slivers: [
+            // App Bar
+            SliverAppBar.medium(
+              backgroundColor: AppTheme.backgroundColor,
+              title: const Text('Dashboard'),
+              actions: [
+                Padding(
+                  padding: const EdgeInsets.only(right: 16.0),
+                  child: IconButton(
+                    icon: const Icon(Icons.person),
+                    style: IconButton.styleFrom(
+                      backgroundColor: Colors.white.withOpacity(0.05),
+                      foregroundColor: Colors.white,
                     ),
-                    titlePadding: const EdgeInsets.only(left: 16, bottom: 16),
-                    expandedTitleScale: 1.3,
+                    onPressed: () {
+                      Navigator.of(context).pushNamed('/profile');
+                    },
                   ),
-                  actions: [
-                    CircleAvatar(
-                      radius: 20,
-                      backgroundColor: AppTheme.primaryColor.withOpacity(0.2),
-                      child: IconButton(
-                        icon: const Icon(Icons.person, color: AppTheme.primaryColor),
-                        onPressed: () {
-                          // Navigate to profile
-                        },
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                  ],
-                ),
-                
-                // Daily Progress
-                SliverToBoxAdapter(
-                  child: _buildDailyProgress(),
-                ),
-                
-                // Today's Plan
-                SliverToBoxAdapter(
-                  child: _buildTodaysPlan(),
-                ),
-                
-                // Progress Overview
-                SliverToBoxAdapter(
-                  child: _buildProgressOverview(),
-                ),
-                
-                // AI Insights
-                SliverToBoxAdapter(
-                  child: _buildAIInsights(),
-                ),
-                
-                // Quick Actions
-                SliverToBoxAdapter(
-                  child: _buildQuickActions(),
-                ),
-                
-                // Bottom Padding for NavBar
-                const SliverToBoxAdapter(
-                  child: SizedBox(height: 80),
                 ),
               ],
             ),
-          ),
-          
-          // Bottom Navigation Bar
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            child: CustomNavBar(
-              currentIndex: _selectedIndex,
-              onTap: (index) {
-                if (index == 4) {
-                  // Navigate to Chat screen
-                  Navigator.of(context).pushNamed('/chat');
-                } else if (index == 1) {
-                  // Navigate to Workout screen
-                  Navigator.of(context).pushReplacementNamed('/workout');
-                } else if (index == 2) {
-                  // Navigate to Nutrition screen
-                  Navigator.of(context).pushReplacementNamed('/nutrition');
-                } else {
-                  setState(() {
-                    _selectedIndex = index;
-                  });
-                }
-              },
+            
+            // Daily Progress
+            SliverToBoxAdapter(
+              child: _buildDailyProgress(),
             ),
-          ),
-        ],
+            
+            // Today's Plan
+            SliverToBoxAdapter(
+              child: _buildTodaysPlan(),
+            ),
+            
+            // Progress Overview
+            SliverToBoxAdapter(
+              child: _buildProgressOverview(),
+            ),
+            
+            // AI Insights
+            SliverToBoxAdapter(
+              child: _buildAIInsights(),
+            ),
+            
+            // Quick Actions
+            SliverToBoxAdapter(
+              child: _buildQuickActions(),
+            ),
+            
+            // Quick Log Widget
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: QuickLogWidget(
+                  onLogComplete: () {
+                    // Refresh data if needed
+                  },
+                ),
+              ),
+            ),
+            
+            // Bottom Padding for NavBar
+            const SliverToBoxAdapter(
+              child: SizedBox(height: 80),
+            ),
+          ],
+        ),
+      ),
+      
+      // Bottom Navigation Bar
+      bottomNavigationBar: CustomNavBar(
+        currentIndex: _selectedIndex,
+        onTap: (index) {
+          if (index == 4) {
+            // Navigate to Chat screen
+            Navigator.of(context).pushNamed('/chat');
+          } else if (index == 1) {
+            // Navigate to Workout screen
+            Navigator.of(context).pushReplacementNamed('/workout');
+          } else if (index == 2) {
+            // Navigate to Nutrition screen
+            Navigator.of(context).pushReplacementNamed('/nutrition');
+          } else if (index == 3) {
+            // Navigate to Progress screen
+            Navigator.of(context).pushReplacementNamed('/progress');
+          } else {
+            setState(() {
+              _selectedIndex = index;
+            });
+          }
+        },
       ),
     );
   }
@@ -196,9 +203,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     Text(
                       text,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: AppTheme.textSecondary,
-                      ),
+                      style: Theme.of(context).textTheme.bodySmall,
                     ),
                   ],
                 ),
@@ -260,58 +265,53 @@ class _HomeScreenState extends State<HomeScreen> {
     required Color color,
     Widget? trailing,
   }) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: AppTheme.cardDecoration(),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: color.withOpacity(0.2),
-              borderRadius: BorderRadius.circular(8),
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8.0),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(
+                icon,
+                color: color,
+                size: 24,
+              ),
             ),
-            child: Icon(
-              icon,
-              color: color,
-              size: 24,
-            ),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                Text(
-                  subtitle,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: AppTheme.textSecondary,
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: Theme.of(context).textTheme.titleMedium,
                   ),
-                ),
-              ],
+                  Text(
+                    subtitle,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
+              ),
             ),
-          ),
-          if (trailing != null) trailing,
-        ],
+            if (trailing != null) trailing,
+          ],
+        ),
       ),
     );
   }
   
   Widget _buildWaterTracker() {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        IconButton(
-          icon: const Icon(Icons.add_circle_outline, color: Colors.blue),
-          onPressed: () {
-            // Add water
-          },
-        ),
-      ],
+    return IconButton(
+      icon: const Icon(Icons.add_circle_outline, color: Colors.blue),
+      onPressed: () {
+        // Add water
+      },
     );
   }
   
@@ -326,35 +326,36 @@ class _HomeScreenState extends State<HomeScreen> {
             style: Theme.of(context).textTheme.titleLarge,
           ),
           const SizedBox(height: 16),
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: AppTheme.cardDecoration(),
-            child: Column(
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: _buildTrendCard(
-                        title: 'Weight',
-                        value: '72 kg',
-                        trend: '-0.5 kg',
-                        isPositive: true,
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _buildTrendCard(
+                          title: 'Weight',
+                          value: '72 kg',
+                          trend: '-0.5 kg',
+                          isPositive: true,
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _buildTrendCard(
-                        title: 'Workout Completion',
-                        value: '85%',
-                        trend: '+10%',
-                        isPositive: true,
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: _buildTrendCard(
+                          title: 'Workout Completion',
+                          value: '85%',
+                          trend: '+10%',
+                          isPositive: true,
+                        ),
                       ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                _buildStreakCalendar(),
-              ],
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  _buildStreakCalendar(),
+                ],
+              ),
             ),
           ),
         ],
@@ -465,61 +466,63 @@ class _HomeScreenState extends State<HomeScreen> {
             style: Theme.of(context).textTheme.titleLarge,
           ),
           const SizedBox(height: 16),
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  AppTheme.primaryColor.withOpacity(0.8),
-                  AppTheme.secondaryColor.withOpacity(0.8),
-                ],
-              ),
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    const Icon(
-                      Icons.auto_awesome,
-                      color: Colors.white,
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      'Personalized Tip',
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        color: Colors.white,
-                      ),
-                    ),
+          Card(
+            clipBehavior: Clip.antiAlias,
+            child: Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    AppTheme.primaryColor.withOpacity(0.8),
+                    AppTheme.secondaryColor.withOpacity(0.8),
                   ],
                 ),
-                const SizedBox(height: 12),
-                Text(
-                  'Based on your recent workouts, increasing your protein intake by 20g daily could help accelerate muscle recovery and growth.',
-                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                    color: Colors.white,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: TextButton.icon(
-                    onPressed: () {
-                      // Show more details
-                    },
-                    icon: const Icon(Icons.arrow_forward, color: Colors.white),
-                    label: const Text(
-                      'Learn More',
-                      style: TextStyle(
+              ),
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.auto_awesome,
                         color: Colors.white,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Personalized Tip',
+                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          color: Colors.white,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Based on your recent workouts, increasing your protein intake by 20g daily could help accelerate muscle recovery and growth.',
+                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                      color: Colors.white,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton.icon(
+                      onPressed: () {
+                        // Show more details
+                      },
+                      icon: const Icon(Icons.arrow_forward, color: Colors.white),
+                      label: const Text(
+                        'Learn More',
+                        style: TextStyle(
+                          color: Colors.white,
+                        ),
                       ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ],
@@ -600,35 +603,33 @@ class _HomeScreenState extends State<HomeScreen> {
     required Color color,
     required VoidCallback onTap,
   }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 16),
-        decoration: BoxDecoration(
-          color: color.withOpacity(0.2),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(
-            color: color.withOpacity(0.5),
-            width: 1,
-          ),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              icon,
-              color: color,
-              size: 32,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              label,
-              style: TextStyle(
+    return Card(
+      elevation: 0,
+      color: AppTheme.surfaceColor,
+      margin: EdgeInsets.zero,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                icon,
                 color: color,
-                fontWeight: FontWeight.w600,
+                size: 32,
               ),
-            ),
-          ],
+              const SizedBox(height: 8),
+              Text(
+                label,
+                style: TextStyle(
+                  color: color,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

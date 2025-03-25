@@ -1,36 +1,116 @@
 import 'package:flutter/material.dart';
 import 'dart:ui';
+import 'dart:math' as math;
 import '../theme/app_theme.dart';
 import '../widgets/custom_nav_bar.dart';
 import '../widgets/ui_components.dart';
+import '../services/gemini_service.dart';
+import '../main.dart';
 
 class ChatScreen extends StatefulWidget {
-  const ChatScreen({super.key});
+  final Widget backgroundContent;
+  
+  const ChatScreen({
+    super.key,
+    required this.backgroundContent,
+  });
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
-class _ChatScreenState extends State<ChatScreen> {
+class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateMixin {
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final List<ChatMessage> _messages = [];
   bool _isTyping = false;
   int _selectedIndex = 4; // Chat tab is selected
-
+  
+  // User info
+  String? _userName;
+  
+  // Animation controllers
+  late AnimationController _animationController;
+  late Animation<double> _slideAnimation;
+  late Animation<double> _blurAnimation;
+  
   @override
   void initState() {
     super.initState();
-    // Add initial bot message
-    _addBotMessage(
-      "Welcome to FitAI! I'm your personal fitness assistant. I can help you with workout plans, nutrition advice, and tracking your fitness goals. How can I assist you today?",
+    
+    _animationController = AnimationController(
+      duration: const Duration(milliseconds: 300),
+      vsync: this,
     );
+    
+    _slideAnimation = Tween<double>(
+      begin: 1.0,
+      end: 0.0,
+    ).animate(CurvedAnimation(
+      parent: _animationController,
+      curve: Curves.easeOutCubic,
+    ));
+    
+    _blurAnimation = Tween<double>(
+      begin: 0.0,
+      end: 20.0,
+    ).animate(CurvedAnimation(
+      parent: _animationController,
+      curve: Curves.easeOut,
+    ));
+    
+    // Start animations after frame is built
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _animationController.forward();
+    });
+    
+    // Load user profile
+    _loadUserProfile();
+  }
+
+  Future<void> _loadUserProfile() async {
+    final userId = supabase.auth.currentUser?.id;
+    if (userId == null) {
+      // Add initial bot message for non-logged in users
+      _addBotMessage(
+        "Hi there! I'm FitCoach, your personal fitness assistant. I can help you with your workout plans, nutrition advice, and fitness goals. How can I assist you today?",
+      );
+      return;
+    }
+    
+    try {
+      final userProfile = await supabase
+          .from('user_profiles')
+          .select('full_name')
+          .eq('user_id', userId)
+          .single();
+      
+      setState(() {
+        _userName = userProfile['full_name'];
+      });
+      
+      // Add personalized greeting
+      String greeting = "Hi";
+      if (_userName != null && _userName!.isNotEmpty) {
+        greeting += " $_userName";
+      }
+      greeting += "! I'm FitCoach, your personal fitness assistant. I have access to your complete profile, workout plan, and nutrition details. I can help you track your progress, answer questions about your fitness plan, or provide guidance on nutrition and workouts. How can I assist you today?";
+      
+      _addBotMessage(greeting);
+    } catch (e) {
+      debugPrint('Error loading user profile: $e');
+      // Add default greeting if profile loading fails
+      _addBotMessage(
+        "Hi there! I'm FitCoach, your personal fitness assistant. I can help you with your workout plans, nutrition advice, and fitness goals. How can I assist you today?",
+      );
+    }
   }
 
   @override
   void dispose() {
     _messageController.dispose();
     _scrollController.dispose();
+    _animationController.dispose();
     super.dispose();
   }
 
@@ -53,41 +133,33 @@ class _ChatScreenState extends State<ChatScreen> {
       _scrollToBottom();
     });
 
-    // Simulate typing response
-    Future.delayed(const Duration(seconds: 1), () {
-      _simulateResponse(text);
-    });
-  }
-
-  void _simulateResponse(String query) {
-    String response;
-
-    if (query.toLowerCase().contains('workout') ||
-        query.toLowerCase().contains('exercise')) {
-      response =
-          "Based on your fitness profile, I recommend a 4-day split focusing on your goal of muscle gain. Your available equipment indicates you have access to a full gym. Here's a sample plan:\n\n1. Monday: Upper body (chest/back)\n2. Tuesday: Lower body (quads/hamstrings)\n3. Thursday: Push (shoulders/triceps)\n4. Friday: Pull (back/biceps)\n\nWould you like me to detail specific exercises for any of these days?";
-    } else if (query.toLowerCase().contains('diet') ||
-        query.toLowerCase().contains('nutrition') ||
-        query.toLowerCase().contains('food')) {
-      response =
-          "Looking at your dietary preferences and restrictions, I've noticed you're aiming for a high-protein diet. Based on your favorite foods and current calories, I suggest:\n\n• Breakfast: Greek yogurt with berries and nuts\n• Lunch: Grilled chicken salad with quinoa\n• Dinner: Salmon with sweet potato and vegetables\n• Snacks: Protein shake, almonds, or cottage cheese\n\nThis plan supports your goal of muscle gain while respecting your gluten sensitivity.";
-    } else if (query.toLowerCase().contains('goal') ||
-        query.toLowerCase().contains('progress')) {
-      response =
-          "You're making great progress toward your fitness goals! In the past month, you've:\n\n• Increased your strength by 15% on major lifts\n• Maintained consistent 4x weekly workouts\n• Improved sleep quality from 6 to 7.5 hours\n• Reduced stress levels from 'High' to 'Medium'\n\nBased on these trends, I suggest focusing on improving your protein intake and adding one more day of recovery-focused activity like yoga or swimming.";
-    } else {
-      response =
-          "I'm here to help with your fitness journey! You can ask me about workout plans, nutrition advice, progress tracking, or any other fitness-related questions. How can I assist with your specific fitness goals today?";
+    // Get the current user ID
+    final userId = supabase.auth.currentUser?.id;
+    if (userId == null) {
+      setState(() {
+        _isTyping = false;
+        _addBotMessage("You need to be logged in to use the chat feature. Please log in and try again.");
+      });
+      return;
     }
 
-    setState(() {
-      _isTyping = false;
-      _addBotMessage(response);
-    });
-
-    // Scroll to bottom again after response
-    Future.delayed(const Duration(milliseconds: 100), () {
-      _scrollToBottom();
+    // Generate response using Gemini
+    GeminiService.generateChatResponse(userId, text).then((response) {
+      setState(() {
+        _isTyping = false;
+        _addBotMessage(response);
+      });
+      
+      // Scroll to bottom again after response
+      Future.delayed(const Duration(milliseconds: 100), () {
+        _scrollToBottom();
+      });
+    }).catchError((error) {
+      setState(() {
+        _isTyping = false;
+        _addBotMessage("I'm sorry, I encountered an error while processing your request. Please try again later.");
+      });
+      debugPrint('Error generating chat response: $error');
     });
   }
 
@@ -109,99 +181,172 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppTheme.backgroundColor,
-      body: Stack(
-        children: [
-          // Gradient background
-          Container(
-            decoration: AppTheme.gradientBackground(),
-          ),
-          
-          // Main content
-          SafeArea(
-            child: Column(
-              children: [
-                // App bar
-                _buildAppBar(),
-                
-                // Chat messages
-                Expanded(
-                  child: _buildChatMessages(),
-                ),
-                
-                // Bottom input field
-                _buildInputField(),
-                
-                // Extra padding for the navigation bar
-                const SizedBox(height: 64),
-              ],
-            ),
-          ),
-          
-          // Custom Navigation Bar
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            child: CustomNavBar(
-              currentIndex: _selectedIndex,
-              onTap: (index) {
-                if (index != _selectedIndex) {
-                  if (index == 0) {
-                    // Go to home screen
-                    Navigator.of(context).pushReplacementNamed('/home');
-                  } else {
-                    setState(() => _selectedIndex = index);
-                    // Other tabs would be implemented in a real app
-                  }
-                }
-              },
-            ),
-          ),
-        ],
-      ),
-    );
+  void _closeChat() {
+    _animationController.reverse().then((_) {
+      Navigator.of(context).pop();
+    });
   }
 
-  Widget _buildAppBar() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: Row(
-        children: [
-          IconButton(
-            icon: const Icon(Icons.arrow_back),
-            onPressed: () {
-              Navigator.of(context).pop();
-            },
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  "FitAI Assistant",
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-                Text(
-                  "Your personal fitness coach",
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: AppTheme.textSecondary,
-                      ),
-                ),
-              ],
+  @override
+  Widget build(BuildContext context) {
+    return WillPopScope(
+      onWillPop: () async {
+        _closeChat();
+        return false;
+      },
+      child: Material(
+        type: MaterialType.transparency,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            // Background content (previous screen)
+            Positioned.fill(
+              child: AbsorbPointer(
+                absorbing: true,
+                child: widget.backgroundContent,
+              ),
             ),
-          ),
-          IconButton(
-            icon: const Icon(Icons.more_vert),
-            onPressed: () {
-              // Show options
-            },
-          ),
-        ],
+            
+            // Animated overlay
+            AnimatedBuilder(
+              animation: _animationController,
+              builder: (context, child) {
+                return Stack(
+                  children: [
+                    // Blurred background
+                    Positioned.fill(
+                      child: BackdropFilter(
+                        filter: ImageFilter.blur(
+                          sigmaX: _blurAnimation.value,
+                          sigmaY: _blurAnimation.value,
+                        ),
+                        child: Container(
+                          color: Colors.black.withOpacity(0.3 * _animationController.value),
+                        ),
+                      ),
+                    ),
+                    
+                    // Chat content
+                    Positioned.fill(
+                      child: Transform.translate(
+                        offset: Offset(0, MediaQuery.of(context).size.height * _slideAnimation.value),
+                        child: SafeArea(
+                          child: Column(
+                            children: [
+                              // Header with close button
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 8,
+                                ),
+                                child: Row(
+                                  children: [
+                                    IconButton(
+                                      icon: const Icon(Icons.close),
+                                      onPressed: _closeChat,
+                                      tooltip: 'Close chat',
+                                      style: IconButton.styleFrom(
+                                        backgroundColor: Colors.black.withOpacity(0.3),
+                                      ),
+                                    ),
+                                    const Expanded(
+                                      child: Text(
+                                        'Chat with AI',
+                                        textAlign: TextAlign.center,
+                                        style: TextStyle(
+                                          fontSize: 18,
+                                          fontWeight: FontWeight.w600,
+                                          color: Colors.white,
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 48),
+                                  ],
+                                ),
+                              ),
+                              
+                              // Chat messages
+                              Expanded(
+                                child: ClipRect(
+                                  child: BackdropFilter(
+                                    filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                                    child: Container(
+                                      color: Colors.black.withOpacity(0.1),
+                                      child: _buildChatMessages(),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              
+                              // Input field
+                              ClipRect(
+                                child: BackdropFilter(
+                                  filter: ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+                                  child: Container(
+                                    padding: EdgeInsets.only(
+                                      left: 16,
+                                      right: 16,
+                                      top: 8,
+                                      bottom: MediaQuery.of(context).padding.bottom + 8,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: Colors.black.withOpacity(0.2),
+                                      border: Border(
+                                        top: BorderSide(
+                                          color: Colors.white.withOpacity(0.1),
+                                        ),
+                                      ),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Expanded(
+                                          child: TextField(
+                                            controller: _messageController,
+                                            decoration: InputDecoration(
+                                              hintText: 'Type your message...',
+                                              hintStyle: TextStyle(
+                                                color: Colors.white.withOpacity(0.6),
+                                              ),
+                                              border: OutlineInputBorder(
+                                                borderRadius: BorderRadius.circular(20),
+                                                borderSide: BorderSide.none,
+                                              ),
+                                              filled: true,
+                                              fillColor: Colors.black.withOpacity(0.3),
+                                              contentPadding: const EdgeInsets.symmetric(
+                                                horizontal: 16,
+                                                vertical: 8,
+                                              ),
+                                            ),
+                                            style: const TextStyle(color: Colors.white),
+                                            onSubmitted: (_) => _sendMessage(),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        IconButton(
+                                          icon: const Icon(Icons.send),
+                                          onPressed: _sendMessage,
+                                          color: AppTheme.primaryColor,
+                                          style: IconButton.styleFrom(
+                                            backgroundColor: Colors.black.withOpacity(0.3),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -226,11 +371,11 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget _buildMessageBubble(ChatMessage message) {
     final isUser = message.isUser;
     final bubbleColor = isUser
-        ? AppTheme.primaryColor
-        : AppTheme.cardColor;
+        ? Colors.white.withOpacity(0.2)
+        : Colors.white.withOpacity(0.15);
     final textColor = isUser
         ? Colors.white
-        : AppTheme.textPrimary;
+        : Colors.white;
     final alignment = isUser
         ? CrossAxisAlignment.end
         : CrossAxisAlignment.start;
@@ -251,7 +396,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   backgroundColor: AppTheme.primaryColor.withOpacity(0.2),
                   radius: 16,
                   child: const Icon(
-                    Icons.auto_awesome,
+                    Icons.fitness_center,
                     size: 18,
                     color: AppTheme.primaryColor,
                   ),
@@ -259,26 +404,42 @@ class _ChatScreenState extends State<ChatScreen> {
               if (!isUser) const SizedBox(width: 8),
               Flexible(
                 child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 12,
+                  margin: EdgeInsets.only(
+                    left: isUser ? 50 : 0,
+                    right: isUser ? 0 : 50,
                   ),
-                  decoration: BoxDecoration(
-                    color: bubbleColor,
+                  child: ClipRRect(
                     borderRadius: BorderRadius.circular(20),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.05),
-                        blurRadius: 5,
-                        offset: const Offset(0, 2),
+                    child: BackdropFilter(
+                      filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 12,
+                        ),
+                        decoration: BoxDecoration(
+                          color: bubbleColor,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: Colors.white.withOpacity(0.2),
+                            width: 0.5,
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.05),
+                              blurRadius: 10,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: Text(
+                          message.text,
+                          style: TextStyle(
+                            color: textColor,
+                            fontSize: 16,
+                          ),
+                        ),
                       ),
-                    ],
-                  ),
-                  child: Text(
-                    message.text,
-                    style: TextStyle(
-                      color: textColor,
-                      fontSize: 16,
                     ),
                   ),
                 ),
@@ -315,31 +476,80 @@ class _ChatScreenState extends State<ChatScreen> {
       padding: const EdgeInsets.symmetric(vertical: 8.0),
       child: Row(
         children: [
-          CircleAvatar(
-            backgroundColor: AppTheme.primaryColor.withOpacity(0.2),
-            radius: 16,
-            child: const Icon(
-              Icons.auto_awesome,
-              size: 18,
-              color: AppTheme.primaryColor,
-            ),
+          // FitCoach avatar with pulse animation
+          AnimatedBuilder(
+            animation: _animationController,
+            builder: (context, child) {
+              return Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: AppTheme.primaryColor.withOpacity(0.2),
+                  border: Border.all(
+                    color: AppTheme.primaryColor.withOpacity(0.2 + _animationController.value * 0.3),
+                    width: 2,
+                  ),
+                ),
+                child: const Icon(
+                  Icons.fitness_center,
+                  size: 18,
+                  color: AppTheme.primaryColor,
+                ),
+              );
+            },
           ),
           const SizedBox(width: 8),
-          Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 16,
-              vertical: 12,
-            ),
-            decoration: BoxDecoration(
-              color: AppTheme.cardColor,
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Row(
-              children: [
-                _buildDot(1),
-                _buildDot(2),
-                _buildDot(3),
-              ],
+          ClipRRect(
+            borderRadius: BorderRadius.circular(20),
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 12,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: Colors.white.withOpacity(0.2),
+                    width: 0.5,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.05),
+                      blurRadius: 10,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      "FitCoach is typing",
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.7),
+                        fontSize: 14,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    SizedBox(
+                      width: 40,
+                      height: 20,
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                        children: [
+                          _buildWaveDot(0),
+                          _buildWaveDot(1),
+                          _buildWaveDot(2),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
           ),
         ],
@@ -347,70 +557,24 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  Widget _buildDot(int delay) {
-    return Container(
-      width: 8,
-      height: 8,
-      margin: const EdgeInsets.symmetric(horizontal: 4),
-      decoration: BoxDecoration(
-        color: AppTheme.textSecondary.withOpacity(0.6),
-        shape: BoxShape.circle,
-      ),
-      child: Center(
-        child: AnimatedOpacity(
-          opacity: 0.4,
-          duration: Duration(milliseconds: 300 * delay),
-          alwaysIncludeSemantics: true,
-          curve: Curves.easeInOut,
-          child: Container(),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildInputField() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(24),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 5.0, sigmaY: 5.0),
+  Widget _buildWaveDot(int index) {
+    return AnimatedBuilder(
+      animation: _animationController,
+      builder: (context, child) {
+        final delay = index / 3;
+        final offset = math.sin((_animationController.value - delay) * math.pi * 2);
+        return Transform.translate(
+          offset: Offset(0, offset * 4),
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
+            width: 6,
+            height: 6,
             decoration: BoxDecoration(
-              color: AppTheme.cardColor.withOpacity(0.8),
-              borderRadius: BorderRadius.circular(24),
-            ),
-            child: Row(
-              children: [
-                // Expand message input
-                Expanded(
-                  child: TextField(
-                    controller: _messageController,
-                    decoration: const InputDecoration(
-                      hintText: "Ask about workouts, nutrition, or goals...",
-                      border: InputBorder.none,
-                      contentPadding: EdgeInsets.symmetric(vertical: 16),
-                    ),
-                    style: const TextStyle(
-                      fontSize: 16,
-                    ),
-                    maxLines: 1,
-                    onSubmitted: (_) => _sendMessage(),
-                  ),
-                ),
-                
-                // Send button
-                IconButton(
-                  icon: const Icon(Icons.send_rounded),
-                  color: AppTheme.primaryColor,
-                  onPressed: _sendMessage,
-                ),
-              ],
+              color: AppTheme.primaryColor.withOpacity(0.7),
+              shape: BoxShape.circle,
             ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 

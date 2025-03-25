@@ -7,7 +7,16 @@ import 'screens/profile_screen.dart';
 import 'screens/chat_screen.dart';
 import 'screens/workout_screen.dart';
 import 'screens/nutrition_screen.dart';
+import 'screens/progress_screen.dart';
 import 'theme/app_theme.dart';
+import 'config.dart';
+import 'package:flutter/foundation.dart';
+
+// Global Supabase client
+late final SupabaseClient supabase;
+
+// Global navigation key
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -21,15 +30,28 @@ void main() async {
   
   print("Supabase initialized with debug mode enabled");
   
+  // Set the global Supabase client
+  supabase = Supabase.instance.client;
+  
   SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,
   ]);
+  
+  // Check if Gemini API key is set
+  if (AppConfig.geminiApiKey == 'YOUR_GEMINI_API_KEY') {
+    if (kDebugMode) {
+      print('WARNING: Gemini API key not set. AI plan generation will not work.');
+      print('Please update the API key in config.dart');
+    }
+  } else {
+    if (kDebugMode) {
+      print('Gemini API key is set. AI plan generation should work.');
+    }
+  }
+  
   runApp(const FitaaiApp());
 }
-
-// Supabase client for use throughout the app
-final supabase = Supabase.instance.client;
 
 class FitaaiApp extends StatefulWidget {
   const FitaaiApp({super.key});
@@ -64,36 +86,60 @@ class _FitaaiAppState extends State<FitaaiApp> {
   }
   
   void _navigateToHome() {
-    if (mounted) {
-      Navigator.of(context).pushReplacementNamed('/home');
-    }
+    // Use the global navigator key instead of BuildContext
+    navigatorKey.currentState?.pushReplacementNamed('/home');
   }
 
   @override
   Widget build(BuildContext context) {
-    final User? currentUser = supabase.auth.currentUser;
-    final String initialRoute;
-    
-    if (currentUser != null) {
-      print("Current user: ${currentUser.email} (verified: ${currentUser.emailConfirmedAt != null})");
-      initialRoute = '/home';
-    } else {
-      print("No current user, showing login");
-      initialRoute = '/login';
-    }
+    final client = supabase;
+    final Map<String, WidgetBuilder> appRoutes = {
+      '/home': (context) => const HomeScreen(),
+      '/workout': (context) => const WorkoutScreen(),
+      '/nutrition': (context) => const NutritionScreen(),
+      '/progress': (context) => const ProgressScreen(),
+      '/login': (context) => const LoginScreen(),
+    };
     
     return MaterialApp(
       title: 'FITAAI',
-      debugShowCheckedModeBanner: false,
-      theme: AppTheme.darkTheme(),
-      initialRoute: initialRoute,
-      routes: {
-        '/login': (context) => const LoginScreen(),
-        '/home': (context) => const HomeScreen(),
-        '/profile': (context) => const ProfileScreen(),
-        '/chat': (context) => const ChatScreen(),
-        '/workout': (context) => const WorkoutScreen(),
-        '/nutrition': (context) => const NutritionScreen(),
+      theme: AppTheme.darkTheme,
+      themeMode: ThemeMode.dark,
+      home: client.auth.currentUser != null ? const HomeScreen() : const LoginScreen(),
+      routes: appRoutes,
+      onGenerateRoute: (settings) {
+        if (settings.name == '/chat') {
+          final currentContext = settings.arguments as BuildContext?;
+          
+          return PageRouteBuilder(
+            pageBuilder: (context, animation, secondaryAnimation) {
+              // Get the current route widget
+              final currentRoute = ModalRoute.of(currentContext ?? context);
+              final currentWidget = currentRoute?.settings.name != null
+                  ? appRoutes[currentRoute!.settings.name!]?.call(context)
+                  : null;
+              
+              return ChatScreen(
+                backgroundContent: RepaintBoundary(
+                  child: Opacity(
+                    opacity: 0.99,
+                    child: currentWidget ?? Container(),
+                  ),
+                ),
+              );
+            },
+            transitionsBuilder: (context, animation, secondaryAnimation, child) {
+              return FadeTransition(
+                opacity: animation,
+                child: child,
+              );
+            },
+            opaque: false,
+            barrierColor: Colors.transparent,
+            fullscreenDialog: true,
+          );
+        }
+        return null;
       },
     );
   }

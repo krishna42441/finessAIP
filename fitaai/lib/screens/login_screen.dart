@@ -35,22 +35,6 @@ class _LoginScreenState extends State<LoginScreen> {
       
       print("Trying to sign in with email: $email");
       
-      // Check if user exists in profiles
-      try {
-        final userProfile = await supabase
-            .from('user_profiles')
-            .select('email')
-            .eq('email', email)
-            .maybeSingle();
-        
-        // If we found a profile but sign-in fails, it's likely an unverified email
-        if (userProfile != null) {
-          print("User profile found for email: $email");
-        }
-      } catch (profileError) {
-        print("Error checking profile: $profileError");
-      }
-      
       // Try to sign in
       try {
         final response = await supabase.auth.signInWithPassword(
@@ -58,40 +42,48 @@ class _LoginScreenState extends State<LoginScreen> {
           password: password,
         );
         
-        print("Sign in successful: ${response.user?.email}");
-        
-        // Navigate to home screen if login successful
-        if (!mounted) return;
-        Navigator.of(context).pushReplacementNamed('/home');
+        if (response.user != null) {
+          print("Sign in successful: ${response.user?.email}");
+          
+          // Navigate to home screen if login successful
+          if (!mounted) return;
+          Navigator.of(context).pushReplacementNamed('/home');
+        } else {
+          print("Sign in failed: User is null in response");
+          setState(() {
+            _errorMessage = 'Authentication failed. Please check your credentials.';
+          });
+        }
       } catch (signInError) {
         print("Sign in error: $signInError");
         
-        // Check if this is likely an unverified email issue
-        setState(() {
-          if (signInError.toString().contains("Email not confirmed") || 
-              signInError.toString().contains("Invalid login credentials")) {
-            _errorMessage = 'Your email may not be verified. Please check your inbox and spam folder for the verification email.';
-            
-            // Show resend verification option
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: const Text('Need a new verification email?'),
-                action: SnackBarAction(
-                  label: 'Resend',
-                  onPressed: () => _resendVerificationEmail(email),
-                ),
-                duration: const Duration(seconds: 10),
-              ),
-            );
-          } else {
-            _errorMessage = 'Invalid email or password';
+        // More specific error handling
+        String errorMessage = 'Invalid email or password';
+        
+        if (signInError is AuthException) {
+          final authError = signInError as AuthException;
+          print("Auth error code: ${authError.statusCode} - ${authError.message}");
+          
+          if (authError.statusCode == 400) {
+            if (authError.message.contains("Email not confirmed")) {
+              errorMessage = 'Your email is not verified. Please check your inbox for the verification email.';
+              _showResendVerificationOption(email);
+            } else if (authError.message.contains("Invalid login credentials")) {
+              errorMessage = 'The email or password you entered is incorrect.';
+            }
+          } else if (authError.statusCode == 422) {
+            errorMessage = 'Invalid email format or password requirements not met.';
           }
+        }
+        
+        setState(() {
+          _errorMessage = errorMessage;
         });
       }
     } catch (e) {
       print("General error during sign-in: $e");
       setState(() {
-        _errorMessage = 'An error occurred while signing in';
+        _errorMessage = 'An error occurred while signing in. Please try again.';
       });
     } finally {
       if (mounted) {
@@ -102,6 +94,21 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
   
+  void _showResendVerificationOption(String email) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Need a new verification email?'),
+          action: SnackBarAction(
+            label: 'Resend',
+            onPressed: () => _resendVerificationEmail(email),
+          ),
+          duration: const Duration(seconds: 10),
+        ),
+      );
+    }
+  }
+
   Future<void> _resendVerificationEmail(String email) async {
     setState(() {
       _isLoading = true;
@@ -201,6 +208,24 @@ class _LoginScreenState extends State<LoginScreen> {
       final password = _passwordController.text;
       final fullName = _fullNameController.text.trim();
       
+      // Validate all required fields
+      if (email.isEmpty || password.isEmpty || fullName.isEmpty) {
+        setState(() {
+          _errorMessage = 'All fields are required';
+          _isLoading = false;
+        });
+        return;
+      }
+      
+      // Validate password length
+      if (password.length < 6) {
+        setState(() {
+          _errorMessage = 'Password must be at least 6 characters long';
+          _isLoading = false;
+        });
+        return;
+      }
+      
       // Validate email format
       if (!email.contains('@') || !email.contains('.')) {
         setState(() {
@@ -260,104 +285,118 @@ class _LoginScreenState extends State<LoginScreen> {
         return;
       }
       
-      // Well-known domains that should work reliably
-      final reliableDomains = [
-        'gmail.com', 'yahoo.com', 'outlook.com', 'hotmail.com', 
-        'aol.com', 'icloud.com', 'protonmail.com', 'zoho.com',
-        'mail.com', 'yandex.com', 'gmx.com', 'live.com'
-      ];
-      
       // Print domain info for debugging
-      print("Email domain: $emailDomain (${reliableDomains.contains(emailDomain) ? 'reliable' : 'unknown'})");
+      print("Email domain: $emailDomain");
+      print("Signup attempt with email: $email, password length: ${password.length}, name: $fullName");
       
       // Register the user with Supabase
-      print("Trying to sign up with email: $email");
+      print("Attempting to sign up with email: $email");
 
-      // First, create the auth user
-      final AuthResponse res = await supabase.auth.signUp(
-        email: email,
-        password: password,
-        emailRedirectTo: 'io.supabase.flutterquickstart://login-callback/',
-      );
-      
-      print("Sign up response: ${res.user?.id}");
-      
-      // Check if the user needs email confirmation
-      if (res.user?.emailConfirmedAt == null) {
-        print("Email confirmation needed for: $email");
-        if (!mounted) return;
-        
-        // Add domain-specific instructions
-        String additionalInfo = '';
-        if (emailDomain == 'gmail.com') {
-          additionalInfo = '\n• For Gmail, also check "Promotions" and "Updates" tabs';
-        } else if (emailDomain == 'outlook.com' || emailDomain == 'hotmail.com') {
-          additionalInfo = '\n• For Outlook/Hotmail, check "Junk Email" and "Other" folders';
-        }
-        
-        // Show verification needed message with detailed instructions
-        setState(() {
-          _errorMessage = null;
-          _successMessage = 'Account created! Verification email sent to $email\n\n'
-              '• Please check both inbox and spam folders$additionalInfo\n'
-              '• Email should arrive within 5 minutes\n'
-              '• Tap "Resend Email" below if you don\'t receive it\n'
-              '• Or use "Verify Now" for an alternative verification';
-        });
-        
-        // Create button to resend verification
-        Future.delayed(Duration(seconds: 1), () {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: const Text('Need help with verification?'),
-                action: SnackBarAction(
-                  label: 'Resend Email',
-                  onPressed: () => _resendVerificationEmail(email),
-                ),
-                duration: const Duration(seconds: 20),
-              ),
-            );
-          }
-        });
-        
-        // Optionally create the profile (will succeed since we're bypassing RLS)
-        try {
-          await supabase.from('user_profiles').insert({
-            'email': email,
-            'user_id': res.user!.id,
+      try {
+        // First, create the auth user
+        final AuthResponse res = await supabase.auth.signUp(
+          email: email,
+          password: password,
+          emailRedirectTo: 'io.supabase.flutterquickstart://login-callback/',
+          data: {
             'full_name': fullName,
+          }
+        );
+        
+        if (res.user == null) {
+          print("Sign up failed: User is null in response");
+          setState(() {
+            _errorMessage = 'Failed to create account. Please try again later.';
+            _isLoading = false;
           });
-          print("Profile created for user: ${res.user!.id}");
-        } catch (profileError) {
-          print("Error creating profile: $profileError");
-          // Non-fatal error, user can still verify email
+          return;
         }
-      } else {
-        // Email already confirmed (unusual case)
-        print("Email already confirmed for: $email");
-        if (!mounted) return;
-        Navigator.of(context).pushReplacementNamed('/home');
-      }
-    } catch (e) {
-      print("Sign up error: $e");
-      setState(() {
-        if (e.toString().contains('already registered')) {
-          _errorMessage = 'This email is already registered. Please sign in instead.';
-        } else if (e.toString().contains('invalid email')) {
-          _errorMessage = 'The email address appears to be invalid. Please check and try again.';
-        } else if (e.toString().contains('weak password')) {
-          _errorMessage = 'Please use a stronger password (at least 6 characters with numbers and letters)';
+        
+        print("Sign up response: ${res.user?.id}");
+        
+        // Check if the user needs email confirmation
+        if (res.user?.emailConfirmedAt == null) {
+          print("Email confirmation needed for: $email");
+          if (!mounted) return;
+          
+          // Add domain-specific instructions
+          String additionalInfo = '';
+          if (emailDomain == 'gmail.com') {
+            additionalInfo = '\n• For Gmail, also check "Promotions" and "Updates" tabs';
+          } else if (emailDomain == 'outlook.com' || emailDomain == 'hotmail.com') {
+            additionalInfo = '\n• For Outlook/Hotmail, check "Junk Email" and "Other" folders';
+          }
+          
+          // Show verification needed message with detailed instructions
+          setState(() {
+            _errorMessage = null;
+            _successMessage = 'Account created! Verification email sent to $email\n\n'
+                '• Please check both inbox and spam folders$additionalInfo\n'
+                '• Email should arrive within 5 minutes\n'
+                '• Tap "Resend Email" below if you don\'t receive it';
+          });
+          
+          // Create button to resend verification
+          Future.delayed(Duration(seconds: 1), () {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: const Text('Need help with verification?'),
+                  action: SnackBarAction(
+                    label: 'Resend Email',
+                    onPressed: () => _resendVerificationEmail(email),
+                  ),
+                  duration: const Duration(seconds: 20),
+                ),
+              );
+            }
+          });
+          
+          // Create the profile in Supabase
+          try {
+            await supabase.from('user_profiles').insert({
+              'user_id': res.user!.id,
+              'email': email,
+              'full_name': fullName,
+              'created_at': DateTime.now().toIso8601String(),
+            });
+            print("Profile created for user: ${res.user!.id}");
+          } catch (profileError) {
+            print("Error creating profile: $profileError");
+            // Non-fatal error, user can still verify email
+          }
         } else {
-          _errorMessage = 'An error occurred during sign up: ${e.toString()}';
+          // Email already confirmed (unusual case)
+          print("Email already confirmed for: $email");
+          if (!mounted) return;
+          Navigator.of(context).pushReplacementNamed('/home');
         }
-      });
-    } finally {
-      if (mounted) {
+      } catch (authError) {
+        print("Supabase auth error on signup: $authError");
+        String errorMsg = 'Failed to create account. Please try again.';
+        
+        if (authError is AuthException) {
+          final authException = authError as AuthException;
+          print("Auth exception code: ${authException.statusCode}, message: ${authException.message}");
+          
+          if (authException.message.contains("already registered")) {
+            errorMsg = 'This email is already registered. Please use the Sign In form or reset your password.';
+          } else if (authException.message.contains("password")) {
+            errorMsg = 'Password requirements not met. Please use a stronger password (min 6 characters).';
+          }
+        }
+        
         setState(() {
+          _errorMessage = errorMsg;
           _isLoading = false;
         });
       }
+    } catch (e) {
+      print("General error during sign-up: $e");
+      setState(() {
+        _errorMessage = 'An error occurred. Please try again later.';
+        _isLoading = false;
+      });
     }
   }
 
@@ -393,236 +432,210 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    
     return Scaffold(
-      body: Stack(
-        children: [
-          // Background gradient
-          Container(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  AppTheme.primaryColor.withOpacity(0.3),
-                  AppTheme.backgroundColor,
-                  AppTheme.backgroundColor,
-                ],
-                stops: const [0.0, 0.3, 1.0],
-              ),
-            ),
-          ),
-          
-          // Content
-          SafeArea(
-            child: SingleChildScrollView(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24.0),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    const SizedBox(height: 60.0),
-                    // App Logo/Title
-                    Container(
-                      alignment: Alignment.center,
-                      child: const Text(
-                        'FITAAI',
-                        style: TextStyle(
-                          fontSize: 42.0,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 2.0,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 40.0),
-                    // Welcome text
-                    Text(
-                      _isSignUp ? 'Create Account' : 'Welcome back',
-                      style: Theme.of(context).textTheme.headlineSmall,
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 8.0),
-                    Text(
-                      _isSignUp 
-                          ? 'Sign up to start your fitness journey' 
-                          : 'Sign in to continue tracking your fitness journey',
-                      style: Theme.of(context).textTheme.bodyMedium,
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 40.0),
-                    
-                    // Full Name field (only for sign up)
-                    if (_isSignUp) ...[
-                      FilledTextField(
-                        label: 'Full Name',
-                        prefixIcon: Icons.person_outline,
-                        controller: _fullNameController,
-                      ),
-                      const SizedBox(height: 16.0),
-                    ],
-                    
-                    // Email field
-                    FilledTextField(
-                      label: 'Email',
-                      prefixIcon: Icons.email_outlined,
-                      controller: _emailController,
-                      keyboardType: TextInputType.emailAddress,
-                    ),
-                    const SizedBox(height: 16.0),
-                    // Password field
-                    FilledTextField(
-                      label: 'Password',
-                      prefixIcon: Icons.lock_outline,
-                      obscureText: true,
-                      suffixIcon: Icons.visibility_outlined,
-                      controller: _passwordController,
-                    ),
-                    const SizedBox(height: 8.0),
-                    // Error and success messages
-                    if (_errorMessage != null)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 16.0),
-                        child: Text(
-                          _errorMessage!,
-                          style: TextStyle(color: Colors.red),
-                          textAlign: TextAlign.center,
-                        ),
-                      ),
-                    if (_successMessage != null)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 16.0),
-                        child: Text(
-                          _successMessage!,
-                          style: TextStyle(color: Colors.green),
-                          textAlign: TextAlign.center,
-                        ),
-                      ),
-                    
-                    // Show troubleshooting options if verification email was sent
-                    if (_successMessage != null && _successMessage!.contains('Verification email sent'))
-                      _buildTroubleshootingOptions(),
-                    
-                    const SizedBox(height: 8.0),
-                    // Forgot password (only for sign in)
-                    if (!_isSignUp)
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: TextButton(
-                          onPressed: () {},
-                          child: const Text('Forgot Password?'),
-                        ),
-                      ),
-                    const SizedBox(height: 24.0),
-                    // Login/Sign Up button
-                    FilledButton(
-                      onPressed: _isLoading ? null : (_isSignUp ? _signUp : _signIn),
-                      style: FilledButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 16.0),
-                        backgroundColor: AppTheme.primaryColor,
-                        disabledBackgroundColor: AppTheme.primaryColor.withOpacity(0.5),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16.0),
-                        ),
-                      ),
-                      child: _isLoading
-                      ? const SizedBox(
-                          height: 20,
-                          width: 20,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
-                        )
-                      : Text(
-                        _isSignUp ? 'Sign Up' : 'Sign In',
-                        style: const TextStyle(
-                          fontSize: 16.0,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 24.0),
-                    // Social login options (only for sign in)
-                    if (!_isSignUp) ...[
-                      const Row(
-                        children: [
-                          Expanded(child: Divider(indent: 16, endIndent: 16)),
-                          Text("OR"),
-                          Expanded(child: Divider(indent: 16, endIndent: 16)),
-                        ],
-                      ),
-                      const SizedBox(height: 24.0),
-                      // Google login button
-                      InkWell(
-                        onTap: _signInWithGoogle,
-                        borderRadius: BorderRadius.circular(16),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 24),
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(16),
-                            color: AppTheme.cardColor.withOpacity(0.3),
-                            border: Border.all(
-                              color: Colors.white.withOpacity(0.1),
-                              width: 0.5,
-                            ),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.g_mobiledata_rounded, color: Colors.red.shade400, size: 28),
-                              const SizedBox(width: 12),
-                              const Text(
-                                'Sign in with Google',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 32.0),
-                    // Sign up/Sign in toggle option
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
+      backgroundColor: AppTheme.backgroundColor,
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24.0),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // App Logo
+                Center(
+                  child: Padding(
+                    padding: const EdgeInsets.only(bottom: 32.0),
+                    child: Column(
                       children: [
-                        Text(
-                          _isSignUp ? 'Already have an account?' : 'Don\'t have an account?',
-                          style: Theme.of(context).textTheme.bodyMedium,
+                        Icon(
+                          Icons.fitness_center,
+                          size: 64,
+                          color: AppTheme.primaryColor,
                         ),
-                        TextButton(
-                          onPressed: () {
-                            setState(() {
-                              _isSignUp = !_isSignUp;
-                              _errorMessage = null;
-                            });
-                          },
-                          child: Text(_isSignUp ? 'Sign In' : 'Sign Up'),
+                        const SizedBox(height: 16),
+                        Text(
+                          'FITAAI',
+                          style: Theme.of(context).textTheme.headlineLarge?.copyWith(
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 1.5,
+                          ),
+                        ),
+                        Text(
+                          'AI-Powered Fitness Coach',
+                          style: Theme.of(context).textTheme.bodyMedium,
                         ),
                       ],
                     ),
-                    // Magic link alternative option
-                    if (!_isSignUp) ...[
-                      const SizedBox(height: 16),
-                      Center(
-                        child: TextButton.icon(
-                          icon: Icon(Icons.link),
-                          label: Text('Sign in with Magic Link'),
-                          onPressed: () => _sendMagicLink(_emailController.text.trim()),
-                        ),
+                  ),
+                ),
+  
+                // Sign Up / Sign In toggle
+                Center(
+                  child: SegmentedButton<bool>(
+                    segments: const [
+                      ButtonSegment<bool>(
+                        value: false,
+                        label: Text('Sign In'),
+                      ),
+                      ButtonSegment<bool>(
+                        value: true,
+                        label: Text('Create Account'),
                       ),
                     ],
-                  ],
+                    selected: {_isSignUp},
+                    onSelectionChanged: (Set<bool> selection) {
+                      setState(() {
+                        _isSignUp = selection.first;
+                        _errorMessage = null;
+                        _successMessage = null;
+                      });
+                    },
+                    style: ButtonStyle(
+                      backgroundColor: MaterialStateProperty.resolveWith<Color>(
+                        (Set<MaterialState> states) {
+                          if (states.contains(MaterialState.selected)) {
+                            return AppTheme.primaryColor;
+                          }
+                          return Colors.transparent;
+                        },
+                      ),
+                    ),
+                  ),
                 ),
-              ),
+                
+                const SizedBox(height: 24),
+                
+                // Error Message
+                if (_errorMessage != null)
+                  Card(
+                    color: Colors.red.withOpacity(0.1),
+                    margin: const EdgeInsets.only(bottom: 16),
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.error_outline, color: Colors.red),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              _errorMessage!,
+                              style: const TextStyle(color: Colors.red),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                
+                // Success Message
+                if (_successMessage != null)
+                  Card(
+                    color: Colors.green.withOpacity(0.1),
+                    margin: const EdgeInsets.only(bottom: 16),
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Icon(Icons.check_circle_outline, color: Colors.green),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              _successMessage!,
+                              style: const TextStyle(color: Colors.green),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                
+                // Full Name field (only for sign up)
+                if (_isSignUp)
+                  TextField(
+                    controller: _fullNameController,
+                    decoration: const InputDecoration(
+                      labelText: 'Full Name',
+                      prefixIcon: Icon(Icons.person),
+                    ),
+                    textInputAction: TextInputAction.next,
+                    enabled: !_isLoading,
+                  ),
+                
+                if (_isSignUp)
+                  const SizedBox(height: 16),
+                
+                // Email field
+                TextField(
+                  controller: _emailController,
+                  decoration: const InputDecoration(
+                    labelText: 'Email',
+                    prefixIcon: Icon(Icons.email),
+                  ),
+                  keyboardType: TextInputType.emailAddress,
+                  textInputAction: TextInputAction.next,
+                  enabled: !_isLoading,
+                ),
+                
+                const SizedBox(height: 16),
+                
+                // Password field
+                TextField(
+                  controller: _passwordController,
+                  decoration: const InputDecoration(
+                    labelText: 'Password',
+                    prefixIcon: Icon(Icons.lock),
+                  ),
+                  obscureText: true,
+                  textInputAction: TextInputAction.done,
+                  enabled: !_isLoading,
+                  onSubmitted: (_) => _isSignUp ? _signUp() : _signIn(),
+                ),
+                
+                const SizedBox(height: 24),
+                
+                // Sign In/Up Button
+                FilledButton(
+                  onPressed: _isLoading ? null : (_isSignUp ? _signUp : _signIn),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    child: _isLoading
+                        ? const SizedBox(
+                            height: 20,
+                            width: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : Text(_isSignUp ? 'Create Account' : 'Sign In'),
+                  ),
+                ),
+                
+                const SizedBox(height: 20),
+                
+                // Forgot Password
+                if (!_isSignUp)
+                  Center(
+                    child: TextButton(
+                      onPressed: _isLoading ? null : _showResetPasswordDialog,
+                      child: const Text('Forgot Password?'),
+                    ),
+                  ),
+                
+                const SizedBox(height: 16),
+                
+                // Privacy and Terms
+                Text(
+                  'By using FITAAI, you agree to our Privacy Policy and Terms of Service.',
+                  style: Theme.of(context).textTheme.bodySmall,
+                  textAlign: TextAlign.center,
+                ),
+              ],
             ),
           ),
-        ],
+        ),
       ),
     );
   }
@@ -839,6 +852,117 @@ class _LoginScreenState extends State<LoginScreen> {
         _isLoading = false;
       });
     }
+  }
+
+  // Function to handle password reset
+  Future<void> _resetPassword(String email) async {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      if (email.isEmpty || !email.contains('@') || !email.contains('.')) {
+        setState(() {
+          _errorMessage = 'Please enter a valid email address';
+          _isLoading = false;
+        });
+        return;
+      }
+
+      // Show immediate feedback
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Sending password reset email...'))
+      );
+      
+      print("Requesting password reset for: $email");
+      
+      await supabase.auth.resetPasswordForEmail(
+        email,
+        redirectTo: 'io.supabase.flutterquickstart://login-callback/',
+      );
+      
+      if (!mounted) return;
+      
+      setState(() {
+        _successMessage = 'Password reset email sent to $email.\n\n'
+            '• Check your inbox and spam folders\n'
+            '• Follow the link in the email to reset your password\n'
+            '• You\'ll be able to set a new password';
+        _errorMessage = null;
+        _isLoading = false;
+      });
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Reset email sent to $email'),
+          duration: const Duration(seconds: 8),
+        ),
+      );
+    } catch (e) {
+      print("Error sending password reset email: $e");
+      
+      if (!mounted) return;
+      setState(() {
+        _errorMessage = 'Failed to send reset email. Please try again later.';
+        _isLoading = false;
+      });
+    }
+  }
+
+  // Show reset password dialog
+  void _showResetPasswordDialog() {
+    final resetEmailController = TextEditingController();
+    
+    // Pre-fill with current email if available
+    if (_emailController.text.isNotEmpty) {
+      resetEmailController.text = _emailController.text;
+    }
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppTheme.cardColor,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
+        title: const Text('Reset Password'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'Enter your email address to receive a password reset link',
+              style: TextStyle(fontSize: 14),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: resetEmailController,
+              decoration: const InputDecoration(
+                labelText: 'Email',
+                border: OutlineInputBorder(),
+              ),
+              keyboardType: TextInputType.emailAddress,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _resetPassword(resetEmailController.text.trim());
+            },
+            style: FilledButton.styleFrom(
+              backgroundColor: AppTheme.primaryColor,
+            ),
+            child: const Text('Send Reset Link'),
+          ),
+        ],
+      ),
+    );
   }
 }
 
