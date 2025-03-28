@@ -22,6 +22,9 @@ class _NutritionScreenState extends State<NutritionScreen> {
   bool _isGenerating = false;
   int _selectedDayIndex = 0;
   
+  // Add weekdays array like in the workout screen
+  final List<String> _weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  
   @override
   void initState() {
     super.initState();
@@ -60,7 +63,8 @@ class _NutritionScreenState extends State<NutritionScreen> {
       
       setState(() {
         _nutritionPlan = plan;
-        _selectedDayIndex = 0;
+        // Set the initial selected day to today's weekday index
+        _selectedDayIndex = _findTodayIndex(plan);
         _isLoading = false;
       });
     } catch (e) {
@@ -79,6 +83,23 @@ class _NutritionScreenState extends State<NutritionScreen> {
         ),
       );
     }
+  }
+
+  // Find the index of today's day in the nutrition plan
+  int _findTodayIndex(Map<String, dynamic>? plan) {
+    if (plan == null || !plan.containsKey('days') || plan['days'] == null) {
+      return 0; // Default to first day if no plan or days
+    }
+    
+    final today = DateTime.now().weekday; // 1 for Monday, 7 for Sunday
+    
+    for (int i = 0; i < plan['days'].length; i++) {
+      if (plan['days'][i]['day_of_week'] == today) {
+        return i;
+      }
+    }
+    
+    return 0; // Default to first day if today not found
   }
   
   void _showGeneratePlanDialog() {
@@ -286,11 +307,15 @@ class _NutritionScreenState extends State<NutritionScreen> {
               itemBuilder: (context, index) {
                 final day = _nutritionPlan?['days'][index];
                 final dayNumber = day['day_of_week'];
-                final dayName = _getDayName(dayNumber);
+                // Convert from 1-indexed (database) to 0-indexed (array)
+                final weekdayIndex = dayNumber - 1;
+                final dayName = weekdayIndex >= 0 && weekdayIndex < _weekdays.length 
+                    ? _weekdays[weekdayIndex] 
+                    : 'Day';
                 
                 return Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 4),
-                  child: _buildDayChip(index, dayName),
+                  child: _buildDayChip(index, dayName, dayNumber),
                 );
               },
             ),
@@ -312,21 +337,18 @@ class _NutritionScreenState extends State<NutritionScreen> {
     );
   }
   
-  String _getDayName(int dayNumber) {
-    final days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-    if (dayNumber >= 1 && dayNumber <= 7) {
-      return days[dayNumber - 1];
-    }
-    return 'Day $dayNumber';
-  }
-  
-  Widget _buildDayChip(int dayIndex, String dayName) {
+  Widget _buildDayChip(int dayIndex, String dayName, int dayNumber) {
     final isSelected = _selectedDayIndex == dayIndex;
-    final today = DateTime.now();
-    final dayDate = today.subtract(Duration(days: today.weekday - (dayIndex + 1)));
-    final isToday = dayDate.day == today.day && 
-                    dayDate.month == today.month && 
-                    dayDate.year == today.year;
+    
+    // Calculate today based on day_of_week like the workout screen
+    // Weekday in DateTime is 1-7, where 1 is Monday and 7 is Sunday
+    // day_of_week from database is also 1-7 with same mapping
+    final isToday = DateTime.now().weekday == dayNumber;
+    
+    // Calculate date based on day number (similar to workout screen approach)
+    final now = DateTime.now();
+    final int daysToAdd = dayNumber - now.weekday;
+    final dayDate = now.add(Duration(days: daysToAdd));
     
     return Material(
       color: Colors.transparent,
@@ -356,7 +378,7 @@ class _NutritionScreenState extends State<NutritionScreen> {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Text(
-                dayName.substring(0, 3),
+                dayName,
                 style: TextStyle(
                   fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                   color: isSelected

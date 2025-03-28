@@ -8,9 +8,13 @@ import 'screens/chat_screen.dart';
 import 'screens/workout_screen.dart';
 import 'screens/nutrition_screen.dart';
 import 'screens/progress_screen.dart';
+import 'screens/edit_profile_screen.dart';
 import 'theme/app_theme.dart';
 import 'config.dart';
 import 'package:flutter/foundation.dart';
+import 'utils/display_utils.dart';
+import 'utils/performance_utils.dart';
+import 'utils/motion_utils.dart';
 
 // Global Supabase client
 late final SupabaseClient supabase;
@@ -21,6 +25,23 @@ final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
+  // Apply system-wide settings
+  SystemChrome.setSystemUIOverlayStyle(
+    SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.dark,
+      systemNavigationBarColor: AppTheme.lightColorScheme.primaryContainer,
+      systemNavigationBarIconBrightness: Brightness.dark,
+      systemNavigationBarDividerColor: Colors.transparent,
+    ),
+  );
+  
+  // Apply high refresh rate optimizations
+  DisplayUtils.optimizeForHighRefreshRate();
+  
+  // Apply performance optimizations
+  PerformanceUtils.enablePerformanceOptimizations();
+  
   // Initialize Supabase
   await Supabase.initialize(
     url: 'https://ynpiumbjcjybrcovxzlx.supabase.co',
@@ -28,15 +49,15 @@ void main() async {
     debug: true, // Enable debug logs for auth issues
   );
   
-  print("Supabase initialized with debug mode enabled");
+  if (kDebugMode) {
+    print("Supabase initialized with debug mode enabled");
+    
+    // Log refresh rate information
+    print("Display optimization enabled");
+  }
   
   // Set the global Supabase client
   supabase = Supabase.instance.client;
-  
-  SystemChrome.setPreferredOrientations([
-    DeviceOrientation.portraitUp,
-    DeviceOrientation.portraitDown,
-  ]);
   
   // Check if Gemini API key is set
   if (AppConfig.geminiApiKey == 'YOUR_GEMINI_API_KEY') {
@@ -60,29 +81,51 @@ class FitaaiApp extends StatefulWidget {
   State<FitaaiApp> createState() => _FitaaiAppState();
 }
 
-class _FitaaiAppState extends State<FitaaiApp> {
+class _FitaaiAppState extends State<FitaaiApp> with SingleTickerProviderStateMixin {
+  // Animation controller for app transitions
+  late AnimationController _transitionController;
+  
   @override
   void initState() {
     super.initState();
+    
+    // Initialize animation controller
+    _transitionController = AnimationController(
+      vsync: this,
+      duration: MotionUtils.medium,
+    );
+    
     // Listen for auth state changes
     supabase.auth.onAuthStateChange.listen((data) {
       final AuthChangeEvent event = data.event;
       final Session? session = data.session;
       
-      print("Auth state changed: $event");
-      if (session != null) {
-        print("User: ${session.user.email} (verified: ${session.user.emailConfirmedAt != null})");
+      if (kDebugMode) {
+        print("Auth state changed: $event");
+        if (session != null) {
+          print("User: ${session.user.email} (verified: ${session.user.emailConfirmedAt != null})");
+        }
       }
       
       if (event == AuthChangeEvent.signedIn) {
         _navigateToHome();
       } else if (event == AuthChangeEvent.passwordRecovery) {
         // Handle password recovery flow
-        print("Password recovery flow detected");
+        if (kDebugMode) {
+          print("Password recovery flow detected");
+        }
       } else if (event == AuthChangeEvent.userUpdated) {
-        print("User updated");
+        if (kDebugMode) {
+          print("User updated");
+        }
       }
     });
+  }
+  
+  @override
+  void dispose() {
+    _transitionController.dispose();
+    super.dispose();
   }
   
   void _navigateToHome() {
@@ -98,49 +141,81 @@ class _FitaaiAppState extends State<FitaaiApp> {
       '/workout': (context) => const WorkoutScreen(),
       '/nutrition': (context) => const NutritionScreen(),
       '/progress': (context) => const ProgressScreen(),
+      '/profile': (context) => const ProfileScreen(),
+      '/edit_profile': (context) => const EditProfileScreen(),
       '/login': (context) => const LoginScreen(),
     };
     
-    return MaterialApp(
-      title: 'FITAAI',
-      theme: AppTheme.darkTheme,
-      themeMode: ThemeMode.dark,
-      home: client.auth.currentUser != null ? const HomeScreen() : const LoginScreen(),
-      routes: appRoutes,
-      onGenerateRoute: (settings) {
-        if (settings.name == '/chat') {
-          final currentContext = settings.arguments as BuildContext?;
+    // Wrap the entire app in a RepaintBoundary for optimized rendering
+    return RepaintBoundary(
+      child: MaterialApp(
+        title: 'FITAAI',
+        // Use Material 3 light theme
+        theme: AppTheme.lightTheme,
+        themeMode: ThemeMode.light,
+        home: client.auth.currentUser != null ? const HomeScreen() : const LoginScreen(),
+        navigatorKey: navigatorKey,
+        debugShowCheckedModeBanner: false,
+        // Use custom page transitions
+        onGenerateRoute: (settings) {
+          // For standard page transitions, use shared axis X
+          if (settings.name != '/chat' && appRoutes.containsKey(settings.name)) {
+            return MotionUtils.createSharedAxisX(
+              pageBuilder: (context) => appRoutes[settings.name!]!(context),
+            );
+          }
           
-          return PageRouteBuilder(
-            pageBuilder: (context, animation, secondaryAnimation) {
-              // Get the current route widget
-              final currentRoute = ModalRoute.of(currentContext ?? context);
-              final currentWidget = currentRoute?.settings.name != null
-                  ? appRoutes[currentRoute!.settings.name!]?.call(context)
-                  : null;
-              
-              return ChatScreen(
+          // Special handling for chat screen with container transform
+          if (settings.name == '/chat') {
+            final currentContext = settings.arguments as BuildContext?;
+            
+            // Get the central FAB position for the origin rect
+            final RenderBox? box = currentContext?.findRenderObject() as RenderBox?;
+            final Rect? originRect = box != null 
+                ? box.localToGlobal(Offset.zero) & box.size 
+                : null;
+                
+            return MotionUtils.createContainerTransform(
+              context: currentContext ?? navigatorKey.currentContext!,
+              page: ChatScreen(
                 backgroundContent: RepaintBoundary(
                   child: Opacity(
                     opacity: 0.99,
-                    child: currentWidget ?? Container(),
+                    child: const SizedBox.expand(),
                   ),
                 ),
-              );
-            },
-            transitionsBuilder: (context, animation, secondaryAnimation, child) {
-              return FadeTransition(
-                opacity: animation,
-                child: child,
-              );
-            },
-            opaque: false,
-            barrierColor: Colors.transparent,
-            fullscreenDialog: true,
+              ),
+              // Use a default rect if we couldn't get one from context
+              originRect: originRect ?? Rect.fromCenter(
+                center: Offset(
+                  MediaQuery.of(currentContext ?? navigatorKey.currentContext!).size.width / 2,
+                  MediaQuery.of(currentContext ?? navigatorKey.currentContext!).size.height - 80,
+                ),
+                width: 56,
+                height: 56,
+              ),
+            );
+          }
+          
+          // Add profile screen handling with a nice transition
+          if (settings.name == '/profile') {
+            return MotionUtils.createSharedAxisY(
+              pageBuilder: (context) => const ProfileScreen(),
+              forward: true,
+            );
+          }
+          
+          return null;
+        },
+        builder: (context, child) {
+          // Apply global app optimizations
+          return MediaQuery(
+            // Disable font scaling for consistent UI
+            data: MediaQuery.of(context).copyWith(textScaleFactor: 1.0),
+            child: child!,
           );
-        }
-        return null;
-      },
+        },
+      ),
     );
   }
 }

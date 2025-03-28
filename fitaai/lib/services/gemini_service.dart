@@ -1,9 +1,9 @@
-import 'package:flutter/material.dart';
 import 'dart:convert';
-import 'dart:math';
+import 'dart:math' as math;
+import 'package:flutter/material.dart';
 import 'package:google_generative_ai/google_generative_ai.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../main.dart'; // Import for supabase client
 import '../config.dart';
 
@@ -252,7 +252,7 @@ Important notes:
         throw Exception('Empty response from Gemini API');
       }
       
-      debugPrint('Raw JSON response: ${jsonText.substring(0, min(100, jsonText.length))}...');
+      debugPrint('Raw JSON response: ${jsonText.substring(0, math.min(100, jsonText.length))}...');
       
       // Clean up the response - Gemini might return markdown-formatted JSON
       String cleanedJson = jsonText;
@@ -421,7 +421,7 @@ Important notes:
         throw Exception('Empty response from Gemini API');
       }
       
-      debugPrint('Raw nutrition JSON: ${jsonText.substring(0, min(100, jsonText.length))}...');
+      debugPrint('Raw nutrition JSON: ${jsonText.substring(0, math.min(100, jsonText.length))}...');
       
       // Clean up the response following the same pattern as for workout plans
       String cleanedJson = jsonText;
@@ -741,131 +741,616 @@ Important notes:
   // Helper method to capitalize strings
   static String _capitalize(String s) => s.isNotEmpty ? '${s[0].toUpperCase()}${s.substring(1)}' : '';
 
-  // Fetch the latest nutrition plan for a user
-  static Future<Map<String, dynamic>> getLatestNutritionPlan(String userId) async {
+  // Get latest workout plan for a user
+  static Future<Map<String, dynamic>?> getLatestWorkoutPlan(String userId) async {
     try {
-      // Fetch the most recent nutrition plan
-      final nutritionPlan = await supabase
-          .from('nutrition_plans')
-          .select('*')
-          .eq('user_id', userId)
-          .order('created_at', ascending: false)
-          .limit(1)
-          .maybeSingle();
-      
-      if (nutritionPlan == null) {
-        // If no plan found, generate a new one
-        final result = await generatePlans(userId);
-        if (result['success'] && result['nutrition_plan_id'] != null) {
-          return await getLatestNutritionPlan(userId);
-        }
-        throw Exception('No nutrition plan available and failed to generate one');
-      }
-
-      // Get the nutrition plan days
-      final nutritionDays = await supabase
-          .from('nutrition_plan_days')
-          .select('*')
-          .eq('plan_id', nutritionPlan['id'])
-          .order('day_of_week');
-
-      // Return the complete nutrition plan
-      return {
-        'plan': nutritionPlan,
-        'days': nutritionDays,
-      };
-    } catch (e) {
-      debugPrint('Error retrieving nutrition plan: $e');
-      throw Exception('Failed to retrieve nutrition plan: $e');
-    }
-  }
-
-  // Fetch the latest workout plan for a user
-  static Future<Map<String, dynamic>> getLatestWorkoutPlan(String userId) async {
-    try {
-      // Fetch the most recent workout plan
-      final workoutPlan = await supabase
+      // Get the latest workout plan for this user
+      final planData = await supabase
           .from('workout_plans')
           .select('*')
           .eq('user_id', userId)
           .order('created_at', ascending: false)
           .limit(1)
-          .maybeSingle();
+          .single();
       
-      if (workoutPlan == null) {
-        // If no plan found, generate a new one
-        final result = await generatePlans(userId);
-        if (result['success'] && result['workout_plan_id'] != null) {
-          return await getLatestWorkoutPlan(userId);
-        }
-        throw Exception('No workout plan available and failed to generate one');
-      }
-
-      // Get the workout plan days
-      final workoutDays = await supabase
+      if (planData == null) return null;
+      
+      // Get all days for this plan
+      final daysData = await supabase
           .from('workout_plan_days')
           .select('*')
-          .eq('plan_id', workoutPlan['id'])
-          .order('day_of_week');
-
-      // For each day, get the exercises
-      List<Map<String, dynamic>> daysWithExercises = [];
-      for (var day in workoutDays) {
-        final exercises = await supabase
+          .eq('plan_id', planData['id'])
+          .order('day_of_week', ascending: true);
+      
+      if (daysData == null) return null;
+      
+      // For each day, get all exercises
+      List<Map<String, dynamic>> days = [];
+      for (var day in daysData) {
+        final exercisesData = await supabase
             .from('workout_exercises')
             .select('*')
             .eq('day_id', day['id'])
-            .order('exercise_order');
+            .order('exercise_order', ascending: true);
         
-        daysWithExercises.add({
-          ...day,
-          'exercises': exercises,
-        });
+        Map<String, dynamic> dayWithExercises = Map<String, dynamic>.from(day);
+        dayWithExercises['exercises'] = exercisesData ?? [];
+        days.add(dayWithExercises);
       }
-
-      // Return the complete workout plan
+      
+      // Return the full plan with all days and exercises
       return {
-        'plan': workoutPlan,
-        'days': daysWithExercises,
+        'plan': planData,
+        'days': days,
       };
     } catch (e) {
-      debugPrint('Error getting workout plan: $e');
-      rethrow;
+      debugPrint('Error fetching workout plan: $e');
+      return null;
+    }
+  }
+  
+  // Get latest nutrition plan for a user
+  static Future<Map<String, dynamic>?> getLatestNutritionPlan(String userId) async {
+    try {
+      // Get the latest nutrition plan for this user
+      final planData = await supabase
+          .from('nutrition_plans')
+          .select('*')
+          .eq('user_id', userId)
+          .order('created_at', ascending: false)
+          .limit(1)
+          .single();
+      
+      if (planData == null) return null;
+      
+      // Get all days for this plan
+      final daysData = await supabase
+          .from('nutrition_plan_days')
+          .select('*')
+          .eq('plan_id', planData['id'])
+          .order('day_of_week', ascending: true);
+      
+      if (daysData == null) return null;
+      
+      // For each day, get all meals
+      List<Map<String, dynamic>> days = [];
+      for (var day in daysData) {
+        final mealsData = await supabase
+            .from('nutrition_plan_meals')
+            .select('*')
+            .eq('day_id', day['id'])
+            .order('meal_order', ascending: true);
+        
+        Map<String, dynamic> dayWithMeals = Map<String, dynamic>.from(day);
+        dayWithMeals['meals'] = mealsData ?? [];
+        days.add(dayWithMeals);
+      }
+      
+      // Return the full plan with all days and meals
+      return {
+        'plan': planData,
+        'days': days,
+      };
+    } catch (e) {
+      debugPrint('Error fetching nutrition plan: $e');
+      return null;
+    }
+  }
+  
+  // Format workout plan for display
+  static String _formatWorkoutPlanSummary(Map<String, dynamic> workoutPlan) {
+    if (workoutPlan.isEmpty) return 'No workout plan available';
+    
+    String summary = '';
+    if (workoutPlan.containsKey('plan') && workoutPlan['plan'] is Map) {
+      final plan = workoutPlan['plan'] as Map;
+      summary += 'Plan: ${plan['plan_name'] ?? 'Custom Plan'}\n';
+      summary += 'Type: ${plan['plan_type'] ?? 'General Fitness'}\n';
+      summary += 'Difficulty: ${plan['plan_difficulty'] ?? 'Intermediate'}\n\n';
+    }
+    
+    if (workoutPlan.containsKey('days') && workoutPlan['days'] is List) {
+      final days = workoutPlan['days'] as List;
+      if (days.isNotEmpty) {
+        summary += 'Schedule:\n';
+        
+        for (var day in days) {
+          if (day is Map) {
+            final dayName = _getDayName(day['day_of_week'] ?? 0);
+            final focus = day['workout_type'] ?? day['focus_area'] ?? 'Rest';
+            final exercises = day['exercises'] is List ? 
+                (day['exercises'] as List).length : 0;
+            
+            summary += '- $dayName: $focus ($exercises exercises)\n';
+          }
+        }
+      }
+    }
+    
+    return summary;
+  }
+  
+  // Format nutrition plan for display
+  static String _formatNutritionPlanSummary(Map<String, dynamic> nutritionPlan) {
+    if (nutritionPlan.isEmpty) return 'No nutrition plan available';
+    
+    String summary = '';
+    if (nutritionPlan.containsKey('plan') && nutritionPlan['plan'] is Map) {
+      final plan = nutritionPlan['plan'] as Map;
+      summary += 'Daily Targets:\n';
+      summary += '- Calories: ${plan['total_daily_calories'] ?? 'Not set'}\n';
+      summary += '- Protein: ${plan['protein_daily_grams'] ?? 'Not set'}g\n';
+      summary += '- Carbs: ${plan['carbs_daily_grams'] ?? 'Not set'}g\n';
+      summary += '- Fat: ${plan['fat_daily_grams'] ?? 'Not set'}g\n\n';
+    }
+    
+    if (nutritionPlan.containsKey('days') && nutritionPlan['days'] is List) {
+      final days = nutritionPlan['days'] as List;
+      if (days.isNotEmpty) {
+        summary += 'Meal Schedule:\n';
+        
+        for (var day in days) {
+          if (day is Map) {
+            final dayName = _getDayName(day['day_of_week'] ?? 0);
+            final isWorkoutDay = day['is_workout_day'] == true;
+            final meals = day['meals'] is List ? 
+                (day['meals'] as List).length : 0;
+            
+            summary += '- $dayName: ${isWorkoutDay ? 'Workout day' : 'Rest day'} ($meals meals)\n';
+          }
+        }
+      }
+    }
+    
+    return summary;
+  }
+  
+  // Helper to get day name from day of week number
+  static String _getDayName(int dayOfWeek) {
+    final days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    if (dayOfWeek >= 1 && dayOfWeek <= 7) {
+      return days[dayOfWeek - 1];
+    }
+    return 'Unknown';
+  }
+
+  // Process and apply workout updates
+  static Future<Map<String, dynamic>> _processWorkoutUpdates(
+    String userId, 
+    Map<String, dynamic> workoutUpdates,
+    Map<String, dynamic> currentWorkoutPlan
+  ) async {
+    try {
+      if (currentWorkoutPlan.isEmpty || !currentWorkoutPlan.containsKey('plan')) {
+        return {
+          "success": false,
+          "message": "Sorry, I couldn't find an existing workout plan to update. Please generate a plan first."
+        };
+      }
+      
+      final planId = currentWorkoutPlan['plan']['id'];
+      
+      // Handle instruction updates for exercises
+      if (workoutUpdates['fullPlanUpdate'] == true && 
+          workoutUpdates['updateType'] == 'instructions') {
+        
+        // This is a special case for updating instructions only
+        int updatedExercises = 0;
+        String? exerciseName = workoutUpdates['exerciseName'];
+        String? newInstructions = workoutUpdates['newInstructions'];
+        
+        if (newInstructions != null && newInstructions.isNotEmpty) {
+          // Get all workout days
+          for (var day in currentWorkoutPlan['days']) {
+            final dayId = day['id'];
+            List<dynamic>? exercises = day['exercises'];
+            
+            if (exercises != null && exercises.isNotEmpty) {
+              // If exercise name is specified, update only that exercise
+              // Otherwise, update all exercises
+              for (var exercise in exercises) {
+                if (exerciseName == null || 
+                    exercise['exercise_name'].toString().toLowerCase().contains(exerciseName.toLowerCase())) {
+                  
+                  // Update the exercise instructions
+                  await supabase
+                      .from('workout_exercises')
+                      .update({
+                        'instructions': newInstructions
+                      })
+                      .eq('id', exercise['id']);
+                  
+                  updatedExercises++;
+                }
+              }
+            }
+          }
+          
+          if (updatedExercises > 0) {
+            return {
+              "success": true,
+              "message": "👍 Updated instructions for $updatedExercises exercises in your workout plan! The instructions should now be clearer and easier to follow."
+            };
+          } else {
+            return {
+              "success": false,
+              "message": "I couldn't find any exercises to update. Please specify a particular exercise or day."
+            };
+          }
+        }
+      } else if (workoutUpdates['fullPlanUpdate'] == true) {
+        // Handle other types of full plan updates
+        return {
+          "success": false,
+          "message": "Full workout plan updates aren't supported yet. Please specify changes to a particular day or exercise."
+        };
+      }
+      
+      // Handle specific day updates
+      if (workoutUpdates.containsKey('specificDay') && workoutUpdates['specificDay'] != null) {
+        final dayUpdate = workoutUpdates['specificDay'];
+        final dayOfWeek = dayUpdate['dayOfWeek'];
+        
+        // Find the day in the current plan
+        String? dayId;
+        for (var day in currentWorkoutPlan['days']) {
+          if (day['day_of_week'] == dayOfWeek) {
+            dayId = day['id'];
+            break;
+          }
+        }
+        
+        if (dayId == null) {
+          return {
+            "success": false,
+            "message": "I couldn't find the specified day (${_getDayName(dayOfWeek)}) in your workout plan."
+          };
+        }
+        
+        // Process each change
+        if (dayUpdate.containsKey('changes') && dayUpdate['changes'] is List) {
+          final changes = dayUpdate['changes'] as List;
+          int changesMade = 0;
+          
+          for (var change in changes) {
+            final changeType = change['type'];
+            final exerciseName = change['exerciseName'];
+            
+            if (changeType == 'add_exercise') {
+              // Get highest exercise order
+              int maxOrder = 0;
+              final existingExercises = await supabase
+                  .from('workout_exercises')
+                  .select('exercise_order')
+                  .eq('day_id', dayId);
+              
+              for (var ex in existingExercises) {
+                if (ex['exercise_order'] > maxOrder) {
+                  maxOrder = ex['exercise_order'];
+                }
+              }
+              
+              // Add the new exercise
+              await supabase
+                  .from('workout_exercises')
+                  .insert({
+                    'id': const Uuid().v4(),
+                    'day_id': dayId,
+                    'exercise_name': exerciseName,
+                    'sets': change['details']?['sets'] ?? 3,
+                    'reps': change['details']?['reps'] ?? '8-12',
+                    'rest_seconds': change['details']?['restSeconds'] ?? 60,
+                    'instructions': change['details']?['instructions'] ?? 'Perform with proper form',
+                    'exercise_order': maxOrder + 1,
+                    'muscle_group': 'Added via chat', // Default value
+                  });
+              
+              changesMade++;
+            } else if (changeType == 'modify_exercise') {
+              // Find the exercise
+              final existingExercises = await supabase
+                  .from('workout_exercises')
+          .select('*')
+                  .eq('day_id', dayId)
+                  .ilike('exercise_name', '%$exerciseName%');
+              
+              if (existingExercises.isEmpty) {
+                continue; // Skip this change
+              }
+              
+              // Update the exercise
+              final exerciseId = existingExercises[0]['id'];
+              Map<String, dynamic> updateData = {};
+              
+              if (change['details']?['sets'] != null) updateData['sets'] = change['details']['sets'];
+              if (change['details']?['reps'] != null) updateData['reps'] = change['details']['reps'];
+              if (change['details']?['restSeconds'] != null) updateData['rest_seconds'] = change['details']['restSeconds'];
+              if (change['details']?['instructions'] != null) updateData['instructions'] = change['details']['instructions'];
+              
+              if (updateData.isNotEmpty) {
+                await supabase
+                    .from('workout_exercises')
+                    .update(updateData)
+                    .eq('id', exerciseId);
+                
+                changesMade++;
+              }
+            } else if (changeType == 'remove_exercise') {
+              // Find the exercise
+              final existingExercises = await supabase
+            .from('workout_exercises')
+            .select('*')
+                  .eq('day_id', dayId)
+                  .ilike('exercise_name', '%$exerciseName%');
+              
+              if (existingExercises.isEmpty) {
+                continue; // Skip this change
+              }
+              
+              // Delete the exercise
+              final exerciseId = existingExercises[0]['id'];
+              await supabase
+                  .from('workout_exercises')
+                  .delete()
+                  .eq('id', exerciseId);
+              
+              changesMade++;
+            }
+          }
+          
+          if (changesMade > 0) {
+            return {
+              "success": true,
+              "message": "👍 Updated your workout plan for ${_getDayName(dayOfWeek)}! Made $changesMade changes to your exercises."
+            };
+          } else {
+            return {
+              "success": false,
+              "message": "I understood your workout update request, but couldn't apply any changes. Please try again with more specific exercise details."
+            };
+          }
+        }
+      }
+      
+      return {
+        "success": false,
+        "message": "I understood you wanted to update your workout plan, but I couldn't determine the specific changes to make."
+      };
+      
+    } catch (e) {
+      debugPrint('Error processing workout updates: $e');
+      return {
+        "success": false,
+        "message": "I encountered an error while trying to update your workout plan. Please try again with more specific instructions."
+      };
+    }
+  }
+  
+  // Process and apply nutrition updates
+  static Future<Map<String, dynamic>> _processNutritionUpdates(
+    String userId, 
+    Map<String, dynamic> nutritionUpdates,
+    Map<String, dynamic> currentNutritionPlan
+  ) async {
+    try {
+      if (currentNutritionPlan.isEmpty || !currentNutritionPlan.containsKey('plan')) {
+        return {
+          "success": false,
+          "message": "Sorry, I couldn't find an existing nutrition plan to update. Please generate a plan first."
+        };
+      }
+      
+      final planId = currentNutritionPlan['plan']['id'];
+      
+      // Handle full plan update - not implemented yet as it requires complex logic
+      if (nutritionUpdates['fullPlanUpdate'] == true) {
+        return {
+          "success": false,
+          "message": "Full nutrition plan updates aren't supported yet. Please specify changes to a particular day or meal."
+        };
+      }
+      
+      // Handle specific day updates
+      if (nutritionUpdates.containsKey('specificDay') && nutritionUpdates['specificDay'] != null) {
+        final dayUpdate = nutritionUpdates['specificDay'];
+        final dayOfWeek = dayUpdate['dayOfWeek'];
+        
+        // Find the day in the current plan
+        String? dayId;
+        for (var day in currentNutritionPlan['days']) {
+          if (day['day_of_week'] == dayOfWeek) {
+            dayId = day['id'];
+            break;
+          }
+        }
+        
+        if (dayId == null) {
+          return {
+            "success": false,
+            "message": "I couldn't find the specified day (${_getDayName(dayOfWeek)}) in your nutrition plan."
+          };
+        }
+        
+        int changesMade = 0;
+        
+        // Update macros if provided
+        if (dayUpdate.containsKey('macroChanges') && dayUpdate['macroChanges'] != null) {
+          final macroChanges = dayUpdate['macroChanges'];
+          Map<String, dynamic> updateData = {};
+          
+          if (macroChanges['totalCalories'] != null) updateData['total_calories'] = macroChanges['totalCalories'];
+          if (macroChanges['protein'] != null) updateData['total_protein'] = macroChanges['protein'];
+          if (macroChanges['carbs'] != null) updateData['total_carbs'] = macroChanges['carbs'];
+          if (macroChanges['fat'] != null) updateData['total_fat'] = macroChanges['fat'];
+          
+          if (updateData.isNotEmpty) {
+            await supabase
+                .from('nutrition_plan_days')
+                .update(updateData)
+                .eq('id', dayId);
+            
+            changesMade++;
+          }
+        }
+        
+        // Process meal changes
+        if (dayUpdate.containsKey('mealChanges') && dayUpdate['mealChanges'] is List) {
+          final mealChanges = dayUpdate['mealChanges'] as List;
+          
+          for (var change in mealChanges) {
+            final changeType = change['type'];
+            final mealName = change['mealName'];
+            
+            if (changeType == 'add_meal') {
+              // Get highest meal order
+              int maxOrder = 0;
+              final existingMeals = await supabase
+                  .from('nutrition_plan_meals')
+                  .select('meal_order')
+                  .eq('day_id', dayId);
+              
+              for (var meal in existingMeals) {
+                if (meal['meal_order'] > maxOrder) {
+                  maxOrder = meal['meal_order'];
+                }
+              }
+              
+              // Format foods
+              String foodsText = 'No specific foods';
+              if (change['details']?['foods'] is List && (change['details']['foods'] as List).isNotEmpty) {
+                foodsText = (change['details']['foods'] as List)
+                    .map((food) => '${food['name']} (${food['amount']})')
+                    .join(', ');
+              }
+              
+              // Add the new meal
+              await supabase
+                  .from('nutrition_plan_meals')
+                  .insert({
+                    'id': const Uuid().v4(),
+                    'day_id': dayId,
+                    'meal_name': mealName,
+                    'foods': foodsText,
+                    'meal_order': maxOrder + 1,
+                  });
+              
+              changesMade++;
+            } else if (changeType == 'modify_meal') {
+              // Find the meal
+              final existingMeals = await supabase
+                  .from('nutrition_plan_meals')
+                  .select('*')
+                  .eq('day_id', dayId)
+                  .ilike('meal_name', '%$mealName%');
+              
+              if (existingMeals.isEmpty) {
+                continue; // Skip this change
+              }
+              
+              // Format foods if provided
+              String? foodsText;
+              if (change['details']?['foods'] is List && (change['details']['foods'] as List).isNotEmpty) {
+                foodsText = (change['details']['foods'] as List)
+                    .map((food) => '${food['name']} (${food['amount']})')
+                    .join(', ');
+              }
+              
+              // Update the meal
+              if (foodsText != null) {
+                await supabase
+                    .from('nutrition_plan_meals')
+                    .update({'foods': foodsText})
+                    .eq('id', existingMeals[0]['id']);
+                
+                changesMade++;
+              }
+            } else if (changeType == 'remove_meal') {
+              // Find the meal
+              final existingMeals = await supabase
+                  .from('nutrition_plan_meals')
+                  .select('*')
+                  .eq('day_id', dayId)
+                  .ilike('meal_name', '%$mealName%');
+              
+              if (existingMeals.isEmpty) {
+                continue; // Skip this change
+              }
+              
+              // Delete the meal
+              await supabase
+                  .from('nutrition_plan_meals')
+                  .delete()
+                  .eq('id', existingMeals[0]['id']);
+              
+              changesMade++;
+            }
+          }
+        }
+        
+        if (changesMade > 0) {
+      return {
+            "success": true,
+            "message": "👍 Updated your nutrition plan for ${_getDayName(dayOfWeek)}! Made $changesMade changes to your macros and meals."
+          };
+        } else {
+          return {
+            "success": false,
+            "message": "I understood your nutrition update request, but couldn't apply any changes. Please try again with more specific details."
+          };
+        }
+      }
+      
+      return {
+        "success": false,
+        "message": "I understood you wanted to update your nutrition plan, but I couldn't determine the specific changes to make."
+      };
+      
+    } catch (e) {
+      debugPrint('Error processing nutrition updates: $e');
+      return {
+        "success": false,
+        "message": "I encountered an error while trying to update your nutrition plan. Please try again with more specific instructions."
+      };
     }
   }
 
-  // Generate a chat response using Gemini AI with workout and nutrition context
-  static Future<String> generateChatResponse(String userId, String userMessage) async {
+  // Process a user request to update their workout or nutrition plan
+  static Future<Map<String, dynamic>> processUserPlanUpdate(String userId, String userMessage) async {
     try {
-      // Configure Gemini model
-      final model = GenerativeModel(
-        model: 'gemini-1.5-pro',
-        apiKey: _apiKey,
-        generationConfig: GenerationConfig(
-          temperature: 0.7,
-          maxOutputTokens: 1024,
-        ),
-      );
-      
-      // Get user profile data
-      Map<String, dynamic> userProfile = {};
+      // Check for direct JSON-like instructions in the message (used for workout instruction updates)
+      if (userMessage.contains('{"updateType": "instructions"')) {
+        try {
+          // Extract the JSON part
+          int jsonStart = userMessage.indexOf('{');
+          int jsonEnd = userMessage.lastIndexOf('}') + 1;
+          
+          if (jsonStart >= 0 && jsonEnd > jsonStart) {
+            String jsonPart = userMessage.substring(jsonStart, jsonEnd);
+            Map<String, dynamic> instructionUpdate = jsonDecode(jsonPart);
+            
+            // Get current workout plan
       Map<String, dynamic> workoutPlan = {};
-      Map<String, dynamic> nutritionPlan = {};
-      
-      try {
-        final userProfileData = await supabase
-            .from('user_profiles')
-            .select('*')
-            .eq('user_id', userId)
-            .single();
-        
-        if (userProfileData != null) {
-          userProfile = Map<String, dynamic>.from(userProfileData);
+            
+            try {
+              final workoutPlanData = await getLatestWorkoutPlan(userId);
+              if (workoutPlanData != null) {
+                workoutPlan = Map<String, dynamic>.from(workoutPlanData);
+              }
+            } catch (e) {
+              debugPrint('Error fetching workout plan: $e');
+            }
+            
+            // Process the instruction update
+            return await _processWorkoutUpdates(userId, instructionUpdate, workoutPlan);
         }
       } catch (e) {
-        debugPrint('Error fetching user profile: $e');
-        userProfile = {};
+          debugPrint('Error parsing instruction update JSON: $e');
+        }
       }
+      
+      // Get current workout and nutrition plans to provide context
+      Map<String, dynamic> workoutPlan = {};
+      Map<String, dynamic> nutritionPlan = {};
       
       try {
         final workoutPlanData = await getLatestWorkoutPlan(userId);
@@ -874,7 +1359,6 @@ Important notes:
         }
       } catch (e) {
         debugPrint('Error fetching workout plan: $e');
-        workoutPlan = {};
       }
       
       try {
@@ -884,225 +1368,287 @@ Important notes:
         }
       } catch (e) {
         debugPrint('Error fetching nutrition plan: $e');
-        nutritionPlan = {};
       }
       
-      // Get today's date information
-      final now = DateTime.now();
-      final currentDayOfWeek = now.weekday; // 1 = Monday, 7 = Sunday
+      // Check for instruction-specific keywords
+      bool likelyInstructionUpdate = userMessage.toLowerCase().contains('instruction') ||
+                                    userMessage.toLowerCase().contains('clearer') ||
+                                    userMessage.toLowerCase().contains('steps') ||
+                                    userMessage.toLowerCase().contains('unclear');
+                                    
+      // Create prompt for Gemini
+      String prompt = '';
       
-      // Extract today's workout and nutrition data
-      Map<String, dynamic> todayWorkout = {};
-      Map<String, dynamic> todayNutrition = {};
-      
-      if (workoutPlan.containsKey('days') && workoutPlan['days'] is List && (workoutPlan['days'] as List).isNotEmpty) {
-        var days = workoutPlan['days'] as List;
-        var foundDay = days.where((day) => day is Map && day['day_of_week'] == currentDayOfWeek).toList();
-        
-        if (foundDay.isNotEmpty && foundDay.first is Map) {
-          todayWorkout = Map<String, dynamic>.from(foundDay.first);
-        }
-      }
-      
-      if (nutritionPlan.containsKey('days') && nutritionPlan['days'] is List && (nutritionPlan['days'] as List).isNotEmpty) {
-        var days = nutritionPlan['days'] as List;
-        var foundDay = days.where((day) => day is Map && day['day_of_week'] == currentDayOfWeek).toList();
-        
-        if (foundDay.isNotEmpty && foundDay.first is Map) {
-          todayNutrition = Map<String, dynamic>.from(foundDay.first);
-        }
-      }
-      
-      // Format workout plan for context
-      String workoutPlanContext = '';
-      if (workoutPlan.containsKey('plan') && workoutPlan.containsKey('days') && workoutPlan['plan'] is Map) {
-        final plan = workoutPlan['plan'] as Map;
-        workoutPlanContext = '''
-Workout plan name: ${plan['plan_name'] ?? 'Custom Workout Plan'}
-Plan description: ${plan['plan_description'] ?? 'A personalized workout plan'}
-Plan type: ${plan['plan_type'] ?? 'General Fitness'}
-Plan difficulty: ${plan['plan_difficulty'] ?? 'Intermediate'}
-Days per week: ${plan['days_per_week'] ?? 7}
+      if (likelyInstructionUpdate) {
+        prompt = '''
+You are an AI assistant that helps update fitness workout instructions based on user requests.
+The user wants clearer or better instructions for exercises in their workout plan.
 
-Workout schedule:
-''';
-        
-        for (var dayData in workoutPlan['days']) {
-          if (dayData is Map) {
-            final day = Map<String, dynamic>.from(dayData);
-            final dayOfWeek = _getDayName(day['day_of_week']);
-            final focusArea = day['workout_type'] ?? day['focus_area'] ?? 'Rest day';
-            final exercises = day['exercises'] is List ? day['exercises'] as List : [];
-            
-            workoutPlanContext += '- $dayOfWeek: $focusArea (${exercises.length} exercises)\n';
-            
-            if (day['day_of_week'] == currentDayOfWeek) {
-              workoutPlanContext += '  TODAY\'S WORKOUT - Details:\n';
-              
-              for (var exerciseData in exercises) {
-                if (exerciseData is Map) {
-                  final exercise = Map<String, dynamic>.from(exerciseData);
-                  final name = exercise['exercise_name'] ?? exercise['name'] ?? 'Exercise';
-                  final sets = exercise['sets'] ?? '-';
-                  final reps = exercise['reps'] ?? '-';
-                  final restTime = exercise['rest_seconds'] != null 
-                      ? '${exercise['rest_seconds']}s rest' 
-                      : exercise['restTime'] ?? '60s rest';
-                  
-                  workoutPlanContext += '  * $name: $sets sets x $reps ($restTime)\n';
-                }
-              }
-            }
-          }
-        }
-      }
-      
-      // Format nutrition plan for context
-      String nutritionPlanContext = '';
-      if (nutritionPlan.containsKey('plan') && nutritionPlan.containsKey('days') && nutritionPlan['plan'] is Map) {
-        final plan = nutritionPlan['plan'] as Map;
-        nutritionPlanContext = '''
-Nutrition plan details:
-Daily calories: ${plan['total_daily_calories'] ?? 'Variable'}
-Protein (daily): ${plan['protein_daily_grams'] ?? '-'}g
-Carbs (daily): ${plan['carbs_daily_grams'] ?? '-'}g
-Fat (daily): ${plan['fat_daily_grams'] ?? '-'}g
+User message: "$userMessage"
 
-Today's nutrition targets:
+Current workout plan summary:
+${workoutPlan.isNotEmpty ? 'Plan ID: ${workoutPlan['plan']?['id'] ?? 'N/A'}' : 'No workout plan available'}
+${_formatWorkoutPlanSummary(workoutPlan)}
+
+Return ONLY a valid JSON object with this structure:
+{
+  "intent": "update_instructions",
+  "updates": {
+    "workout": {
+      "shouldUpdate": true,
+      "updateType": "instructions",
+      "exerciseId": "exercise_id_here",
+      "newInstructions": "Clearer instructions here"
+    }
+  },
+  "userFriendlyResponse": "I've updated the instructions for [exercise name] to be clearer."
+}
 ''';
-        
-        if (todayNutrition.isNotEmpty) {
-          final isWorkoutDay = todayNutrition['isWorkoutDay'] ?? false;
-          final calories = todayNutrition['total_calories'] ?? plan['total_daily_calories'] ?? '-';
-          final protein = todayNutrition['total_protein'] ?? plan['protein_daily_grams'] ?? '-';
-          final carbs = todayNutrition['total_carbs'] ?? plan['carbs_daily_grams'] ?? '-';
-          final fat = todayNutrition['total_fat'] ?? plan['fat_daily_grams'] ?? '-';
-          
-          nutritionPlanContext += '''
-- Day type: ${isWorkoutDay ? 'Workout day' : 'Rest day'}
-- Target calories: ${calories}
-- Protein: ${protein}g
-- Carbs: ${carbs}g
-- Fat: ${fat}g
-''';
-          
-          if (todayNutrition['waterIntake'] != null) {
-            nutritionPlanContext += '- Water intake: ${todayNutrition['waterIntake']}\n';
-          }
-          
-          if (isWorkoutDay) {
-            if (todayNutrition['preworkoutNutrition'] != null) {
-              nutritionPlanContext += '- Pre-workout: ${todayNutrition['preworkoutNutrition']}\n';
-            }
-            
-            if (todayNutrition['postworkoutNutrition'] != null) {
-              nutritionPlanContext += '- Post-workout: ${todayNutrition['postworkoutNutrition']}\n';
-            }
-          }
-          
-          if (todayNutrition['mealTimingRecommendation'] != null) {
-            nutritionPlanContext += '- Meal timing: ${todayNutrition['mealTimingRecommendation']}\n';
-          }
-        }
+      } else {
+        prompt = '''
+You are an AI assistant that helps update fitness and nutrition plans based on user requests.
+Analyze the user's message and determine if they want to update their workout or nutrition plan.
+
+User message: "$userMessage"
+
+Current workout plan summary:
+${workoutPlan.isNotEmpty ? 'Plan ID: ${workoutPlan['plan']?['id'] ?? 'N/A'}' : 'No workout plan available'}
+${_formatWorkoutPlanSummary(workoutPlan)}
+
+Current nutrition plan summary:
+${nutritionPlan.isNotEmpty ? 'Plan ID: ${nutritionPlan['plan']?['id'] ?? 'N/A'}' : 'No nutrition plan available'}
+${_formatNutritionPlanSummary(nutritionPlan)}
+
+Return ONLY a valid JSON object with this structure:
+{
+  "intent": "update_plan",
+  "updates": {
+    "workout": {
+      "shouldUpdate": true/false,
+      "updateType": "full_plan/day/exercise",
+      "dayOfWeek": 1-7 (if applicable),
+      "exerciseId": "exercise_id_here" (if applicable),
+      "changes": {
+        // Specific changes to make
       }
-      
-      // Prepare user information context
-      String userContext = '';
-      if (userProfile.isNotEmpty) {
-        userContext = '''
-User profile:
-- Name: ${userProfile['full_name'] ?? 'Not provided'}
-- Age: ${userProfile['age'] ?? 'Not specified'}
-- Gender: ${userProfile['gender'] ?? 'Not specified'}
-- Weight: ${userProfile['weight_kg'] ?? 'Not specified'} kg
-- Height: ${userProfile['height_cm'] ?? 'Not specified'} cm
-- Fitness level: ${userProfile['fitness_level'] ?? 'Intermediate'}
-- Primary fitness goal: ${userProfile['primary_fitness_goal'] ?? 'General fitness'}
-- Specific target areas: ${userProfile['specific_targets'] ?? 'Full body'}
-- Motivation: ${userProfile['motivation'] ?? 'Not specified'}
-- Workout days per week: ${userProfile['workout_days_per_week'] ?? 'Not specified'}
-- Workout duration: ${userProfile['workout_minutes_per_session'] ?? 'Not specified'} minutes
-- Equipment access: ${userProfile['equipment_access'] ?? 'Not specified'}
-- Indoor/outdoor preference: ${userProfile['indoor_outdoor_preference'] ?? 'Not specified'}
-- Previous program experience: ${userProfile['previous_program_experience'] ?? 'None'}
-- Daily activity level: ${userProfile['daily_activity_level'] ?? 'Moderate'}
-- Sleep hours: ${userProfile['sleep_hours'] ?? 'Not specified'} hours
-- Stress level: ${userProfile['stress_level'] ?? 'Not specified'}
-- Eating habits: ${userProfile['eating_habits'] ?? 'Not specified'}
-- Dietary restrictions: ${_formatJsonField(userProfile['dietary_restrictions'])}
-- Favorite foods: ${userProfile['favorite_foods'] ?? 'Not specified'}
-- Avoided foods: ${userProfile['avoided_foods'] ?? 'Not specified'}
-- Medical conditions: ${userProfile['medical_conditions'] ?? 'None'}
-- Fitness concerns: ${userProfile['fitness_concerns'] ?? 'None'}
-- Additional notes: ${userProfile['additional_notes'] ?? 'None'}
+    },
+    "nutrition": {
+      "shouldUpdate": true/false,
+      "updateType": "full_plan/day/meal",
+      "dayOfWeek": 1-7 (if applicable),
+      "mealId": "meal_id_here" (if applicable),
+      "changes": {
+        // Specific changes to make
+      }
+    }
+  },
+  "userFriendlyResponse": "A friendly message explaining what changes will be made."
+}
 ''';
       }
       
-      // Create the prompt for Gemini
-      final dateStr = '${now.day}/${now.month}/${now.year}';
-      final dayName = _getDayName(currentDayOfWeek);
-      
-      final prompt = '''
-You are a fitness and nutrition assistant for a mobile fitness app called FitAI. Today is $dateStr ($dayName).
-
-${userContext}
-
-${workoutPlanContext}
-
-${nutritionPlanContext}
-
-The user has asked: "$userMessage"
-
-Please provide a helpful, conversational response that directly addresses their question. If they ask about today's workout or meal plan, prioritize providing specific information about what's scheduled for today. Be supportive and encouraging, offering actionable advice based on their fitness goals and nutrition plan.
-
-Keep your response concise and focused on answering their specific question.
-''';
+      // Configure Gemini model
+      final model = GenerativeModel(
+        model: 'gemini-1.5-pro',
+        apiKey: _apiKey,
+        generationConfig: GenerationConfig(
+          temperature: 0.7,
+          maxOutputTokens: 2048,
+        ),
+      );
       
       // Generate content with Gemini
       final response = await model.generateContent([Content.text(prompt)]);
-      String responseText = response.text ?? '';
+      String jsonText = response.text ?? '';
       
-      if (responseText.isEmpty) {
-        return "I'm sorry, I couldn't generate a response at the moment. Please try again later.";
+      if (jsonText.isEmpty) {
+        return {
+          "success": false,
+          "message": "Failed to analyze your request. Please try being more specific about what changes you'd like to make to your plan."
+        };
       }
       
-      return responseText;
-    } catch (e) {
-      debugPrint('Error generating chat response with Gemini: $e');
-      return "I apologize, but I'm having trouble accessing your fitness data right now. Can you please try asking me again in a moment?";
-    }
-  }
-  
-  // Helper to format JSON fields for display
-  static String _formatJsonField(dynamic jsonField) {
-    if (jsonField == null) return 'None';
-    
-    try {
-      if (jsonField is String) {
-        final Map<String, dynamic> parsed = jsonDecode(jsonField);
-        return parsed.entries
-            .where((entry) => entry.value == true)
-            .map((entry) => entry.key)
-            .join(', ');
-      } else if (jsonField is Map) {
-        return jsonField.entries
-            .where((entry) => entry.value == true)
-            .map((entry) => entry.key)
-            .join(', ');
+      // Clean and parse the response
+      if (jsonText.contains("```json")) {
+        jsonText = jsonText.replaceAll("```json", "").replaceAll("```", "");
+      } else if (jsonText.contains("```")) {
+        jsonText = jsonText.replaceAll("```", "");
+      }
+      
+      // Find the start and end of the JSON object
+      int startBrace = jsonText.indexOf('{');
+      int endBrace = jsonText.lastIndexOf('}');
+      
+      if (startBrace == -1 || endBrace == -1 || startBrace > endBrace) {
+        return {
+          "success": false,
+          "message": "I couldn't process your update request properly. Could you please rephrase what changes you'd like to make to your plan?"
+        };
+      }
+      
+      // Extract just the JSON part
+      jsonText = jsonText.substring(startBrace, endBrace + 1);
+      
+      try {
+        // Parse the JSON
+        final updateInstructions = Map<String, dynamic>.from(jsonDecode(jsonText));
+        
+        // Check if we should perform an update
+        if (updateInstructions['intent'] == 'no_update') {
+          return {
+            "success": true,
+            "changes_made": false,
+            "message": updateInstructions['userFriendlyResponse'] ?? "I couldn't detect a specific plan update request in your message. Please try being more specific about what changes you'd like to make."
+          };
+        }
+        
+        // Process the updates based on the instructions
+        final updates = updateInstructions['updates'];
+        bool changesMade = false;
+        String updateSummary = "";
+        
+        // Process workout updates if needed
+        if (updates['workout']?['shouldUpdate'] == true) {
+          final workoutUpdates = await _processWorkoutUpdates(userId, updates['workout'], workoutPlan);
+          changesMade = changesMade || workoutUpdates['success'];
+          updateSummary += workoutUpdates['message'] + "\n\n";
+        }
+        
+        // Process nutrition updates if needed
+        if (updates['nutrition']?['shouldUpdate'] == true) {
+          final nutritionUpdates = await _processNutritionUpdates(userId, updates['nutrition'], nutritionPlan);
+          changesMade = changesMade || nutritionUpdates['success'];
+          updateSummary += nutritionUpdates['message'];
+        }
+        
+        // Return the result
+        return {
+          "success": true,
+          "changes_made": changesMade,
+          "message": updateSummary.isNotEmpty 
+            ? updateSummary 
+            : updateInstructions['userFriendlyResponse'] ?? "I've processed your request, but couldn't make any specific updates to your plan."
+        };
+        
+      } catch (e) {
+        debugPrint('Error processing plan update: $e');
+        return {
+          "success": false,
+          "message": "I encountered an error while trying to update your plan. Please try again with more specific instructions."
+        };
       }
     } catch (e) {
-      debugPrint('Error formatting JSON field: $e');
+      debugPrint('Error in processUserPlanUpdate: $e');
+      return {
+        "success": false,
+        "message": "Sorry, I encountered an error while trying to update your plan. Please try again later."
+      };
     }
-    
-    return jsonField.toString();
   }
 
-  // Helper to get day name from day of week number
-  static String _getDayName(int dayOfWeek) {
-    final days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-    if (dayOfWeek >= 1 && dayOfWeek <= 7) {
-      return days[dayOfWeek - 1];
+  // Generate a chat response using Gemini
+  static Future<String> generateChatResponse(String userId, String userMessage) async {
+    try {
+      // Get recent chat history for context
+      List<Map<String, dynamic>> chatHistory = [];
+      try {
+        final data = await supabase
+            .from('chat_messages')
+            .select('message_text, is_user, created_at')
+            .eq('user_id', userId)
+            .order('created_at', ascending: false)
+            .limit(10); // Get last 10 messages
+        
+        if (data != null) {
+          chatHistory = List<Map<String, dynamic>>.from(data);
+          // Reverse to get chronological order
+          chatHistory = chatHistory.reversed.toList();
+        }
+      } catch (e) {
+        debugPrint('Error fetching chat history: $e');
+      }
+      
+      // Get user profile data
+      Map<String, dynamic> userProfile = {};
+      try {
+        final data = await supabase
+            .from('user_profiles')
+            .select()
+            .eq('user_id', userId)
+            .single();
+        
+        if (data != null) {
+          userProfile = Map<String, dynamic>.from(data);
+        }
+      } catch (e) {
+        debugPrint('Error fetching user profile: $e');
+      }
+
+      // Get current workout and nutrition plans to provide context
+      Map<String, dynamic> workoutPlan = {};
+      Map<String, dynamic> nutritionPlan = {};
+      
+      try {
+        final workoutPlanData = await getLatestWorkoutPlan(userId);
+        if (workoutPlanData != null) {
+          workoutPlan = Map<String, dynamic>.from(workoutPlanData);
+        }
+      } catch (e) {
+        debugPrint('Error fetching workout plan: $e');
+      }
+      
+      try {
+        final nutritionPlanData = await getLatestNutritionPlan(userId);
+        if (nutritionPlanData != null) {
+          nutritionPlan = Map<String, dynamic>.from(nutritionPlanData);
+        }
+      } catch (e) {
+        debugPrint('Error fetching nutrition plan: $e');
+      }
+
+      // Format chat history for Gemini
+      List<Content> messages = [];
+      
+      // First, add a system message to set the context
+      messages.add(Content.text('''You are FitCoach, an AI fitness coach for the FitAAI app. You have access to the user's profile information, workout plan, and nutrition plan. 
+Always give helpful, concise, and accurate fitness advice. Use appropriate emoji occasionally for friendliness.
+
+User Profile Summary:
+${userProfile.isNotEmpty ? 'Name: ${userProfile['full_name'] ?? 'Unknown'}, Age: ${userProfile['age'] ?? 'Unknown'}, Gender: ${userProfile['gender'] ?? 'Unknown'}, Height: ${userProfile['height_cm'] ?? 'Unknown'} cm, Weight: ${userProfile['weight_kg'] ?? 'Unknown'} kg' : 'No profile data available'}
+
+Workout Plan Summary:
+${workoutPlan.isNotEmpty ? 'Plan ID: ${workoutPlan['plan']?['id'] ?? 'N/A'}' : 'No workout plan available'}
+${_formatWorkoutPlanSummary(workoutPlan)}
+
+Nutrition Plan Summary:
+${nutritionPlan.isNotEmpty ? 'Plan ID: ${nutritionPlan['plan']?['id'] ?? 'N/A'}' : 'No nutrition plan available'}
+${_formatNutritionPlanSummary(nutritionPlan)}'''));
+      
+      // Then add chat history messages
+      for (var message in chatHistory) {
+        messages.add(Content.text(message['message_text']));
+      }
+      
+      // Finally, add the current user message
+      messages.add(Content.text(userMessage));
+      
+      // Configure Gemini model
+      final model = GenerativeModel(
+        model: 'gemini-1.5-pro',
+        apiKey: _apiKey,
+        generationConfig: GenerationConfig(
+          temperature: 0.7,
+          maxOutputTokens: 2048,
+        ),
+      );
+      
+      // Generate response with Gemini
+      final response = await model.generateContent(messages);
+      return response.text ?? "I'm sorry, I couldn't generate a response. Please try again.";
+      
+    } catch (e) {
+      debugPrint('Error in generateChatResponse: $e');
+      return "I'm sorry, I encountered an error. Please try again later.";
     }
-    return 'Unknown';
   }
 } 

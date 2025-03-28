@@ -326,7 +326,7 @@ class _DailyLogScreenState extends State<DailyLogScreen> {
                   ),
                 ),
                 IconButton(
-                  icon: const Icon(Icons.add_circle, color: AppTheme.primaryColor),
+                  icon: Icon(Icons.add_circle, color: AppTheme.primaryColor),
                   onPressed: () {
                     // Show weight entry dialog
                   },
@@ -360,7 +360,7 @@ class _DailyLogScreenState extends State<DailyLogScreen> {
               color: AppTheme.primaryColor.withOpacity(0.2),
               borderRadius: BorderRadius.circular(8),
             ),
-            child: const Icon(
+            child: Icon(
               Icons.monitor_weight,
               color: AppTheme.primaryColor,
               size: 20,
@@ -414,7 +414,7 @@ class _DailyLogScreenState extends State<DailyLogScreen> {
                   ),
                 ),
                 IconButton(
-                  icon: const Icon(Icons.add_circle, color: AppTheme.primaryColor),
+                  icon: Icon(Icons.add_circle, color: AppTheme.primaryColor),
                   onPressed: () {
                     // Show water entry dialog
                   },
@@ -478,7 +478,7 @@ class _DailyLogScreenState extends State<DailyLogScreen> {
               color: AppTheme.primaryColor.withOpacity(0.2),
               borderRadius: BorderRadius.circular(8),
             ),
-            child: const Icon(
+            child: Icon(
               Icons.water_drop,
               color: AppTheme.primaryColor,
               size: 20,
@@ -523,7 +523,7 @@ class _DailyLogScreenState extends State<DailyLogScreen> {
                   ),
                 ),
                 IconButton(
-                  icon: const Icon(Icons.add_circle, color: AppTheme.primaryColor),
+                  icon: Icon(Icons.add_circle, color: AppTheme.primaryColor),
                   onPressed: () {
                     // Show workout entry dialog
                   },
@@ -557,7 +557,7 @@ class _DailyLogScreenState extends State<DailyLogScreen> {
               color: AppTheme.primaryColor.withOpacity(0.2),
               borderRadius: BorderRadius.circular(8),
             ),
-            child: const Icon(
+            child: Icon(
               Icons.fitness_center,
               color: AppTheme.primaryColor,
               size: 20,
@@ -607,7 +607,7 @@ class _DailyLogScreenState extends State<DailyLogScreen> {
                   ),
                 ),
                 IconButton(
-                  icon: const Icon(Icons.add_circle, color: AppTheme.primaryColor),
+                  icon: Icon(Icons.add_circle, color: AppTheme.primaryColor),
                   onPressed: () {
                     // Show nutrition entry dialog
                   },

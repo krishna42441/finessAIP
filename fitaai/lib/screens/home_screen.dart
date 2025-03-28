@@ -30,33 +30,28 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
     
     return Scaffold(
       backgroundColor: AppTheme.backgroundColor,
+      appBar: AppBar(
+        title: const Text('Dashboard'),
+        centerTitle: true,
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 16.0),
+            child: IconButton(
+              icon: const Icon(Icons.person),
+              onPressed: () {
+                Navigator.of(context).pushNamed('/profile');
+              },
+            ),
+          ),
+        ],
+      ),
       body: SafeArea(
         child: CustomScrollView(
           slivers: [
-            // App Bar
-            SliverAppBar.medium(
-              backgroundColor: AppTheme.backgroundColor,
-              title: const Text('Dashboard'),
-              actions: [
-                Padding(
-                  padding: const EdgeInsets.only(right: 16.0),
-                  child: IconButton(
-                    icon: const Icon(Icons.person),
-                    style: IconButton.styleFrom(
-                      backgroundColor: Colors.white.withOpacity(0.05),
-                      foregroundColor: Colors.white,
-                    ),
-                    onPressed: () {
-                      Navigator.of(context).pushNamed('/profile');
-                    },
-                  ),
-                ),
-              ],
-            ),
-            
             // Daily Progress
             SliverToBoxAdapter(
               child: _buildDailyProgress(),
