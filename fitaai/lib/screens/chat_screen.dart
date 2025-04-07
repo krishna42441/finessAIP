@@ -6,6 +6,8 @@ import '../widgets/custom_nav_bar.dart';
 import '../widgets/ui_components.dart';
 import '../services/gemini_service.dart';
 import '../main.dart';
+import '../services/plan_service.dart';
+import '../services/mcp_service.dart';
 
 class ChatScreen extends StatefulWidget {
   final Widget backgroundContent;
@@ -33,6 +35,11 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   late AnimationController _animationController;
   late Animation<double> _slideAnimation;
   late Animation<double> _blurAnimation;
+  
+  // New variables for plan generation
+  bool _planGenerationInProgress = false;
+  bool _generatingWorkoutPlan = false;
+  bool _generatingNutritionPlan = false;
   
   @override
   void initState() {
@@ -217,216 +224,39 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
   }
 
   void _sendMessage() {
-    final text = _messageController.text.trim();
-    if (text.isEmpty) return;
-
-    // Add user message to state and DB
-    _addUserMessage(text);
-    _messageController.clear();
-    setState(() {
-      _isTyping = true;
-    });
-
-    // Scroll to bottom
-    Future.delayed(const Duration(milliseconds: 100), () {
-      _scrollToBottom();
-    });
-
-    // Get the current user ID
-    final userId = supabase.auth.currentUser?.id;
-    if (userId == null) {
-      setState(() {
-        _isTyping = false;
-        _addBotMessage("You need to be logged in to use the chat feature. Please log in and try again.");
-      });
-      return;
-    }
-
-    // First check if this might be a plan update request
-    _checkForPlanUpdates(userId, text);
+    final message = _messageController.text.trim();
+    if (message.isEmpty) return;
+    
+    // Send to Gemini for processing
+    _handleMessage(message);
   }
-  
-  // Check if the message is trying to update workout or nutrition plans
-  void _checkForPlanUpdates(String userId, String userMessage) {
-    // Simple pattern matching to detect potential plan update requests
-    final updateKeywords = [
-      'update', 'change', 'modify', 'edit', 'replace', 'add',
-      'remove', 'delete', 'increase', 'decrease', 'switch',
-      'workout', 'exercise', 'nutrition', 'meal', 'diet',
-      'calories', 'protein', 'carbs', 'fat', 'macros'
-    ];
-    
-    // Special keywords for instruction updates
-    final instructionKeywords = [
-      'instruction', 'instructions', 'steps', 'explain', 'clearer',
-      'unclear', 'confusing', 'detail', 'details', 'how to', 'guide',
-      'form', 'technique', 'perform', 'execution'
-    ];
-    
-    // Health situation keywords
-    final healthKeywords = [
-      'sick', 'ill', 'injured', 'pain', 'sore', 'tired',
-      'exhausted', 'fever', 'cold', 'flu', 'headache',
-      'can\'t', 'cannot', 'skip', 'postpone', 'reschedule'
-    ];
 
-    // Count how many update keywords are in the message
-    int keywordCount = 0;
-    for (var keyword in updateKeywords) {
-      if (userMessage.toLowerCase().contains(keyword.toLowerCase())) {
-        keywordCount++;
-      }
-    }
-    
-    // Count instruction keywords
-    int instructionKeywordCount = 0;
-    for (var keyword in instructionKeywords) {
-      if (userMessage.toLowerCase().contains(keyword.toLowerCase())) {
-        instructionKeywordCount++;
-      }
-    }
-    
-    // Count health situation keywords
-    int healthKeywordCount = 0;
-    for (var keyword in healthKeywords) {
-      if (userMessage.toLowerCase().contains(keyword.toLowerCase())) {
-        healthKeywordCount++;
-      }
-    }
+  /// Get the current user ID, or null if not logged in
+  String? _getUserId() {
+    return supabase.auth.currentUser?.id;
+  }
 
-    // Check if this is an instruction update request
-    bool isInstructionUpdate = 
-        instructionKeywordCount >= 1 && userMessage.toLowerCase().contains('workout') ||
-        instructionKeywordCount >= 1 && userMessage.toLowerCase().contains('exercise');
-        
-    // Check if this is a health-related situation
-    bool isHealthSituation = healthKeywordCount >= 1;
-    
-    // If we have at least 2 update keywords or it's an instruction update or health situation, process accordingly
-    if (keywordCount >= 2 || isInstructionUpdate || isHealthSituation) {
-      String processMessage = userMessage;
-      bool needsConfirmation = false;
-      String confirmationMessage = "";
-      
-      // For instruction updates, modify the message to include special formatting
-      if (isInstructionUpdate) {
-        // Extract exercise name if mentioned
-        String exerciseName = "";
-        RegExp exerciseRegex = RegExp(r'for\s+([a-zA-Z\s]+)');
-        Match? match = exerciseRegex.firstMatch(userMessage);
-        if (match != null && match.groupCount >= 1) {
-          exerciseName = match.group(1)?.trim() ?? "";
-        }
-        
-        // Create a JSON-like message structure for better processing
-        processMessage = """
-        I need clearer instructions for exercises in my workout plan.
-        {"updateType": "instructions", "fullPlanUpdate": true, 
-         "exerciseName": "$exerciseName", 
-         "newInstructions": "Detailed step-by-step instructions with proper form cues and technique guidance."}
-        """;
-      } 
-      // For health situations, format appropriately
-      else if (isHealthSituation) {
-        needsConfirmation = true;
-        confirmationMessage = "I notice you might not be feeling well. Would you like me to suggest modifications to your workout plan for today?";
-        
-        // We'll handle this with confirmation, so just store the original message
-        processMessage = userMessage;
-      }
-      // For nutrition/macro changes, check if it needs confirmation
-      else if (userMessage.toLowerCase().contains('protein') || 
-               userMessage.toLowerCase().contains('calories') || 
-               userMessage.toLowerCase().contains('carbs') || 
-               userMessage.contains('fat')) {
-        needsConfirmation = true;
-        confirmationMessage = "I understand you want to adjust your nutrition plan. Would you like me to update your macronutrient targets?";
-        
-        // We'll handle this with confirmation, so just store the original message
-        processMessage = userMessage;
+  /// Generate regular chat response
+  Future<void> _generateRegularChatResponse(String message) async {
+    try {
+      final userId = _getUserId();
+      if (userId == null) {
+        _addBotMessage("I'm sorry, you need to be logged in to use this feature. Please log in to continue.");
+        return;
       }
       
-      // If confirmation is needed, show the confirmation dialog
-      if (needsConfirmation) {
-        final originalMessage = processMessage;
-        
-        setState(() {
-          _isTyping = false;
-          // Add a confirmation message
-          _addBotMessage(confirmationMessage);
-          // Add confirmation buttons
-          _addConfirmationButtons(userId, originalMessage);
-        });
-      } else {
-        // Process request directly if no confirmation needed
-        _processUpdateRequest(userId, processMessage);
-      }
-    } else {
-      // If no keywords match, just handle as a regular chat message
-      _generateRegularChatResponse(userId, userMessage);
-    }
-  }
-  
-  // Add confirmation buttons to the message list
-  void _addConfirmationButtons(String userId, String originalMessage) {
-    setState(() {
-      _messages.add(ChatMessage(
-        text: "__confirmation_buttons__", // Special marker for rendering buttons
-        isUser: false,
-        timestamp: DateTime.now(),
-        confirmationData: {
-          'userId': userId,
-          'message': originalMessage,
-        },
-      ));
-    });
-    
-    // Scroll to bottom
-    Future.delayed(const Duration(milliseconds: 100), () {
-      _scrollToBottom();
-    });
-  }
-  
-  // Process the update request with Gemini
-  void _processUpdateRequest(String userId, String message) {
-    GeminiService.processUserPlanUpdate(userId, message).then((result) {
-      setState(() {
-        _isTyping = false;
-        
-        // If changes were made or it was properly recognized as an update request,
-        // respond with the result message
-        if (result['success'] == true) {
-          _addBotMessage(result['message']);
-        } else {
-          // If it wasn't recognized as a valid update, fall back to normal chat
-          _generateRegularChatResponse(userId, message);
-        }
-      });
-    }).catchError((error) {
-      debugPrint('Error processing plan update: $error');
-      // Fall back to normal chat response
-      _generateRegularChatResponse(userId, message);
-    });
-  }
-
-  void _generateRegularChatResponse(String userId, String userMessage) {
-    GeminiService.generateChatResponse(userId, userMessage).then((response) {
-      setState(() {
-        _isTyping = false;
-        _addBotMessage(response);
-      });
+      // Add user message first
+      _addUserMessage(message);
       
-      // Scroll to bottom again after response
-      Future.delayed(const Duration(milliseconds: 100), () {
-        _scrollToBottom();
-      });
-    }).catchError((error) {
-      setState(() {
-        _isTyping = false;
-        _addBotMessage("I'm sorry, I encountered an error while processing your request. Please try again later.");
-      });
-      debugPrint('Error generating chat response: $error');
-    });
+      // Get response from Gemini
+      final response = await GeminiService.generateChatResponse(userId, message);
+      
+      // Add bot response
+      _addBotMessage(response);
+    } catch (e) {
+      debugPrint('Error generating response: $e');
+      _addBotMessage("I'm sorry, I encountered an error while processing your message. Please try again later.");
+    }
   }
 
   void _scrollToBottom() {
@@ -447,209 +277,283 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    
     return WillPopScope(
       onWillPop: () async {
-        _closeChat();
-        return false;
+        if (_animationController.status == AnimationStatus.completed) {
+          await _animationController.reverse();
+        }
+        return true;
       },
-      child: Material(
-        type: MaterialType.transparency,
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            // Background content (previous screen)
-            Positioned.fill(
-              child: AbsorbPointer(
-                absorbing: true,
-                child: widget.backgroundContent,
-              ),
-            ),
-            
-            // Animated overlay
-            AnimatedBuilder(
-              animation: _animationController,
-              builder: (context, child) {
-                return Stack(
-                  children: [
-                    // Blurred background
-                    Positioned.fill(
-                      child: BackdropFilter(
-                        filter: ImageFilter.blur(
-                          sigmaX: _blurAnimation.value,
-                          sigmaY: _blurAnimation.value,
+      child: Scaffold(
+        body: AnimatedBuilder(
+          animation: _animationController,
+          builder: (context, child) {
+            return Stack(
+              children: [
+                // Background content
+                widget.backgroundContent,
+                
+                // Blurred overlay
+                BackdropFilter(
+                  filter: ImageFilter.blur(
+                    sigmaX: _blurAnimation.value,
+                    sigmaY: _blurAnimation.value,
+                  ),
+                  child: Container(
+                    color: Colors.black.withOpacity(0.3),
+                  ),
+                ),
+                
+                // Chat interface
+                Transform.translate(
+                  offset: Offset(0, MediaQuery.of(context).size.height * _slideAnimation.value),
+                  child: child!,
+                ),
+              ],
+            );
+          },
+          child: SafeArea(
+            child: Column(
+              children: [
+                // Header with action buttons
+                _buildHeader(),
+                
+                // Chat messages
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () => FocusScope.of(context).unfocus(),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.surface,
+                        borderRadius: const BorderRadius.only(
+                          topLeft: Radius.circular(30),
+                          topRight: Radius.circular(30),
                         ),
-                        child: Container(
-                          color: colorScheme.scrim.withOpacity(0.4 * _animationController.value),
+                      ),
+                      child: ClipRRect(
+                        borderRadius: const BorderRadius.only(
+                          topLeft: Radius.circular(30),
+                          topRight: Radius.circular(30),
+                        ),
+                        child: Column(
+                          children: [
+                            // Messages list
+                            Expanded(
+                              child: ListView.builder(
+                                controller: _scrollController,
+                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                                itemCount: _messages.length,
+                                itemBuilder: (context, index) {
+                                  return _buildMessageBubble(_messages[index]);
+                                },
+                              ),
+                            ),
+                            
+                            // Typing indicator
+                            if (_isTyping)
+                              _buildTypingIndicator(),
+                            
+                            // Message input field
+                            _buildInputField(),
+                          ],
                         ),
                       ),
                     ),
-                    
-                    // Chat content
-                    Positioned.fill(
-                      child: Transform.translate(
-                        offset: Offset(0, MediaQuery.of(context).size.height * _slideAnimation.value),
-                        child: SafeArea(
-                          child: Column(
-                            children: [
-                              // Header with app bar
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 8,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: colorScheme.surface,
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.black.withOpacity(0.05),
-                                      blurRadius: 8,
-                                      offset: const Offset(0, 1),
-                                    ),
-                                  ],
-                                ),
-                                child: Row(
-                                  children: [
-                                    IconButton(
-                                      icon: const Icon(Icons.arrow_back),
-                                      onPressed: _closeChat,
-                                      tooltip: 'Back',
-                                    ),
-                                    Expanded(
-                                      child: Text(
-                                        'Chat with FitCoach',
-                                        textAlign: TextAlign.center,
-                                        style: Theme.of(context).textTheme.titleLarge,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 48),
-                                    IconButton(
-                                      icon: const Icon(Icons.refresh),
-                                      onPressed: () {
-                                        setState(() {
-                                          _messages.clear();
-                                          _isTyping = true;
-                                        });
-                                        _loadChatHistory().then((_) {
-                                          setState(() {
-                                            _isTyping = false;
-                                            if (_messages.isEmpty) {
-                                              _addBotMessage("Hi there! I'm your AI fitness coach. How can I help you today?");
-                                            }
-                                          });
-                                        });
-                                      },
-                                      tooltip: 'Reload chat history',
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              
-                              // Chat messages
-                              Expanded(
-                                    child: Container(
-                                  color: colorScheme.background,
-                                      child: _buildChatMessages(),
-                                ),
-                              ),
-                              
-                              // Input field
-                              Container(
-                                    padding: EdgeInsets.only(
-                                      left: 16,
-                                      right: 16,
-                                  top: 12,
-                                  bottom: MediaQuery.of(context).padding.bottom + 12,
-                                    ),
-                                    decoration: BoxDecoration(
-                                  color: colorScheme.surface,
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.black.withOpacity(0.05),
-                                      blurRadius: 8,
-                                      offset: const Offset(0, -1),
-                                    ),
-                                  ],
-                                    ),
-                                    child: Row(
-                                      children: [
-                                        Expanded(
-                                          child: TextField(
-                                            controller: _messageController,
-                                            decoration: InputDecoration(
-                                              hintText: 'Type your message...',
-                                          filled: true,
-                                          fillColor: colorScheme.surfaceVariant.withOpacity(0.5),
-                                              border: OutlineInputBorder(
-                                            borderRadius: BorderRadius.circular(28),
-                                                borderSide: BorderSide.none,
-                                              ),
-                                          enabledBorder: OutlineInputBorder(
-                                            borderRadius: BorderRadius.circular(28),
-                                            borderSide: BorderSide(
-                                              color: colorScheme.outline.withOpacity(0.3),
-                                              width: 1,
-                                            ),
-                                          ),
-                                          focusedBorder: OutlineInputBorder(
-                                            borderRadius: BorderRadius.circular(28),
-                                            borderSide: BorderSide(
-                                              color: colorScheme.primary,
-                                              width: 2,
-                                            ),
-                                          ),
-                                          contentPadding: const EdgeInsets.symmetric(
-                                            horizontal: 16,
-                                            vertical: 12,
-                                          ),
-                                          prefixIcon: Icon(
-                                            Icons.chat_bubble_outline,
-                                            color: colorScheme.onSurfaceVariant,
-                                          ),
-                                        ),
-                                        onSubmitted: (_) => _sendMessage(),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    FloatingActionButton.small(
-                                      onPressed: _sendMessage,
-                                      elevation: 0,
-                                      tooltip: 'Send message',
-                                      child: Icon(Icons.send),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                );
-              },
+                  ),
+                ),
+              ],
             ),
-          ],
+          ),
+        ),
+        bottomNavigationBar: CustomNavBar(
+          currentIndex: _selectedIndex,
+          onTap: (index) {
+            if (index != _selectedIndex) {
+              Navigator.pop(context);
+            }
+          },
         ),
       ),
     );
   }
+  
+  /// Handle incoming user message
+  Future<void> _handleMessage(String message) async {
+    setState(() {
+      _isTyping = true;
+    });
 
-  Widget _buildChatMessages() {
-    return ListView.builder(
-      controller: _scrollController,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      itemCount: _messages.length + (_isTyping ? 1 : 0),
-      itemBuilder: (context, index) {
-        if (index < _messages.length) {
-          final message = _messages[index];
-          return _buildMessageBubble(message);
-        } else {
-          // Show typing indicator
-          return _buildTypingIndicator();
+    try {
+      // Check if the user is asking for a workout or nutrition plan
+      if (_isRequestingPlan(message)) {
+        await _processGeneratePlanRequest(message);
+      } else {
+        // Handle as a regular chat message
+        await _generateRegularChatResponse(message);
+      }
+    } catch (e) {
+      debugPrint('Error handling message: $e');
+      _showSnackBar('An error occurred: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isTyping = false;
+        });
+      }
+    }
+
+    // Scroll to the bottom of the chat
+    _scrollToBottom();
+  }
+  
+  bool _isRequestingPlan(String message) {
+    final lowercaseMessage = message.toLowerCase();
+    
+    // Check for workout or nutrition plan request based on keywords
+    final workoutKeywords = ['workout plan', 'exercise plan', 'training plan', 'fitness plan'];
+    final nutritionKeywords = ['nutrition plan', 'meal plan', 'diet plan', 'eating plan', 'food plan'];
+    
+    final isWorkoutRequest = workoutKeywords.any((keyword) => lowercaseMessage.contains(keyword));
+    final isNutritionRequest = nutritionKeywords.any((keyword) => lowercaseMessage.contains(keyword));
+    
+    return isWorkoutRequest || isNutritionRequest;
+  }
+
+  Future<void> _processGeneratePlanRequest(String message) async {
+    final lowercaseMessage = message.toLowerCase();
+    
+    // Determine the type of plan requested
+    final workoutKeywords = ['workout plan', 'exercise plan', 'training plan', 'fitness plan'];
+    final nutritionKeywords = ['nutrition plan', 'meal plan', 'diet plan', 'eating plan', 'food plan'];
+    
+    final isWorkoutRequest = workoutKeywords.any((keyword) => lowercaseMessage.contains(keyword));
+    final isNutritionRequest = nutritionKeywords.any((keyword) => lowercaseMessage.contains(keyword));
+    
+    // Add user message first
+    final userId = _getUserId();
+    if (userId == null) {
+      _addBotMessage('You need to be logged in to generate plans. Please log in and try again.');
+      return;
+    }
+    
+    _addUserMessage(message);
+    
+    // Send a message to let the user know what's happening
+    if (isWorkoutRequest && isNutritionRequest) {
+      _addBotMessage('I\'ll create both workout and nutrition plans that work together. This might take a moment...');
+      await _generatePlans(userId, PlanType.both);
+    } else if (isWorkoutRequest) {
+      _addBotMessage('I\'ll create a personalized workout plan for you. This might take a moment...');
+      await _generatePlans(userId, PlanType.workout);
+    } else if (isNutritionRequest) {
+      _addBotMessage('I\'ll create a personalized nutrition plan for you. This might take a moment...');
+      await _generatePlans(userId, PlanType.nutrition);
+    } else {
+      // Handle as regular message if we can't clearly identify plan type
+      await _generateRegularChatResponse(message);
+    }
+  }
+
+  Future<void> _generatePlans(String userId, PlanType planType) async {
+    try {
+      setState(() {
+        if (planType == PlanType.workout || planType == PlanType.both) {
+          _generatingWorkoutPlan = true;
         }
-      },
+        if (planType == PlanType.nutrition || planType == PlanType.both) {
+          _generatingNutritionPlan = true;
+        }
+      });
+      
+      final success = await PlanService.generatePlans(userId, planType);
+      
+      if (!mounted) return;
+      
+      if (success) {
+        final planTypeStr = planType == PlanType.both 
+            ? "workout and nutrition plans" 
+            : (planType == PlanType.workout ? "workout plan" : "nutrition plan");
+        
+        _addBotMessage('Your $planTypeStr has been generated successfully! 🎉');
+        
+        if (planType == PlanType.workout || planType == PlanType.both) {
+          _addBotMessage('You can view your workout plan in the Workout tab.');
+        }
+        
+        if (planType == PlanType.nutrition || planType == PlanType.both) {
+          _addBotMessage('You can view your nutrition plan in the Nutrition tab.');
+        }
+        
+        _addBotMessage('Your plan is personalized based on your profile information. You can make adjustments to your profile at any time to get updated recommendations.');
+      } else {
+        _addBotMessage('I had trouble generating your plan. Please try again later or update your profile with more information to get better results.');
+      }
+    } catch (e) {
+      debugPrint('Error generating plans: $e');
+      _addBotMessage('Sorry, I encountered an error while generating your plan. Please try again later.');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _generatingWorkoutPlan = false;
+          _generatingNutritionPlan = false;
+        });
+      }
+    }
+  }
+
+  Widget _buildHeader() {
+    final colorScheme = Theme.of(context).colorScheme;
+    
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: 8,
+        vertical: 8,
+      ),
+      decoration: BoxDecoration(
+        color: colorScheme.surface,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 8,
+            offset: const Offset(0, 1),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          IconButton(
+            icon: const Icon(Icons.arrow_back),
+            onPressed: _closeChat,
+            tooltip: 'Back',
+          ),
+          Expanded(
+            child: Text(
+              'Chat with FitCoach',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+          ),
+          const SizedBox(width: 48),
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: () {
+              setState(() {
+                _messages.clear();
+                _isTyping = true;
+              });
+              _loadChatHistory().then((_) {
+                setState(() {
+                  _isTyping = false;
+                  if (_messages.isEmpty) {
+                    _addBotMessage("Hi there! I'm your AI fitness coach. How can I help you today?");
+                  }
+                });
+              });
+            },
+            tooltip: 'Reload chat history',
+          ),
+        ],
+      ),
     );
   }
 
@@ -926,6 +830,97 @@ class _ChatScreenState extends State<ChatScreen> with SingleTickerProviderStateM
       ),
     );
   }
+
+  Widget _buildInputField() {
+    final colorScheme = Theme.of(context).colorScheme;
+    
+    return Container(
+      padding: EdgeInsets.only(
+        left: 16,
+        right: 16,
+        top: 12,
+        bottom: MediaQuery.of(context).padding.bottom + 12,
+      ),
+      decoration: BoxDecoration(
+        color: colorScheme.surface,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 8,
+            offset: const Offset(0, -1),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: _messageController,
+              decoration: InputDecoration(
+                hintText: 'Type your message...',
+                filled: true,
+                fillColor: colorScheme.surfaceVariant.withOpacity(0.5),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(28),
+                  borderSide: BorderSide.none,
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(28),
+                  borderSide: BorderSide(
+                    color: colorScheme.outline.withOpacity(0.3),
+                    width: 1,
+                  ),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(28),
+                  borderSide: BorderSide(
+                    color: colorScheme.primary,
+                    width: 2,
+                  ),
+                ),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 12,
+                ),
+                prefixIcon: Icon(
+                  Icons.chat_bubble_outline,
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ),
+              onSubmitted: (_) => _sendMessage(),
+            ),
+          ),
+          const SizedBox(width: 8),
+          FloatingActionButton.small(
+            onPressed: _sendMessage,
+            elevation: 0,
+            tooltip: 'Send message',
+            child: const Icon(Icons.send),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showSnackBar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  /// Simple forwarding method for compatibility with existing code
+  void _processUpdateRequest(String userId, String message) {
+    // Add user message if not already added
+    if (_messages.isEmpty || _messages.last.isUser == false) {
+      _addUserMessage(message);
+    }
+    
+    // Use the new async method
+    _generateRegularChatResponse(message);
+  }
 }
 
 class ChatMessage {
@@ -1023,4 +1018,49 @@ class BrainwavePainter extends CustomPainter {
            oldDelegate.amplitude != amplitude ||
            oldDelegate.waveCount != waveCount;
   }
-} 
+}
+
+/// Custom action button for chat screen
+class ActionButton extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  const ActionButton({
+    super.key,
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+        decoration: BoxDecoration(
+          color: colorScheme.primaryContainer,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: colorScheme.onPrimaryContainer),
+            const SizedBox(height: 4),
+            Text(
+              label,
+              style: TextStyle(
+                color: colorScheme.onPrimaryContainer,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

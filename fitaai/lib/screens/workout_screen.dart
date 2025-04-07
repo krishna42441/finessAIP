@@ -6,6 +6,9 @@ import 'dart:ui';
 import '../services/n8n_service.dart';
 import '../services/gemini_service.dart';
 import '../main.dart';
+import '../widgets/edit_plan_dialog.dart';
+import '../models/plan_models.dart';
+import '../services/plan_service.dart';
 
 class WorkoutScreen extends StatefulWidget {
   const WorkoutScreen({super.key});
@@ -38,141 +41,46 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
       _errorMessage = null;
     });
     
-    try {
-      final userId = supabase.auth.currentUser!.id;
-      
-      // Try to get the latest workout plan
-      try {
-        final plan = await GeminiService.getLatestWorkoutPlan(userId);
-        if (!mounted) return;
-        
-        setState(() {
-          _workoutPlan = plan;
-          _isLoading = false;
-          
-          // Update workout types based on the plan
-          if (plan != null && plan['days'] != null) {
-            final days = plan['days'] as List;
-            _workoutTypes = List.filled(7, 'Rest');
-            for (var day in days) {
-              final dayOfWeek = day['day_of_week'] as int;
-              if (dayOfWeek >= 1 && dayOfWeek <= 7) {
-                _workoutTypes[dayOfWeek - 1] = day['focus_area'] ?? 'Workout';
-              }
-            }
-          }
-        });
-      } catch (e) {
-        // If no plan exists, generate one
-        if (e.toString().contains('No workout plan found')) {
-          _showGeneratePlanDialog();
-        } else {
-          throw e;
-        }
-      }
-    } catch (e) {
+    final userId = supabase.auth.currentUser?.id;
+    if (userId == null) {
       if (!mounted) return;
       
       setState(() {
         _isLoading = false;
-        _errorMessage = 'Failed to load workout plan: ${e.toString()}';
+        _errorMessage = 'User not authenticated';
       });
+      
+      return;
     }
-  }
-  
-  void _showGeneratePlanDialog() {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        title: const Text('No Workout Plan Found'),
-        content: const Text('Would you like to generate a personalized workout plan based on your profile?'),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              setState(() {
-                _isLoading = false;
-                _errorMessage = 'No workout plan available';
-              });
-            },
-            child: const Text('Not Now'),
-          ),
-          FilledButton(
-            onPressed: () {
-              Navigator.pop(context);
-              _generateWorkoutPlan();
-            },
-            child: const Text('Generate Plan'),
-          ),
-        ],
-      ),
-    );
-  }
-  
-  Future<void> _generateWorkoutPlan() async {
-    if (!mounted) return;
-    
-    setState(() {
-      _isLoading = true;
-      _errorMessage = null;
-    });
-    
-    final userId = supabase.auth.currentUser!.id;
     
     try {
-      // Try to use GeminiService
-      final result = await GeminiService.generatePlans(userId);
+      // Use the new PlanService
+      final workoutPlan = await PlanService.getWorkoutPlan(userId);
       
       if (!mounted) return;
       
-      if (result['success'] == true) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Workout plan generated successfully!'),
-            backgroundColor: Colors.green,
-          ),
-        );
-        
-        await _loadWorkoutPlan();
-      } else {
-        throw Exception(result['message']);
-      }
-    } catch (e) {
-      debugPrint('Error with Gemini: $e');
-      
-      // If Gemini fails, try the mock data generation
-      try {
-        final mockResult = await N8NService.generateMockWorkoutPlan(userId);
-        
-        if (!mounted) return;
-        
-        if (mockResult != null) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Generated fallback workout plan'),
-              backgroundColor: Colors.orange,
-            ),
-          );
-          
-          await _loadWorkoutPlan();
-        }
-      } catch (mockError) {
-        if (!mounted) return;
-        
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to generate workout plan: $mockError'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    } finally {
-      if (mounted) {
+      if (workoutPlan == null) {
         setState(() {
           _isLoading = false;
+          _errorMessage = 'No workout plan found. Go to your profile to generate one.';
         });
+        return;
       }
+      
+      setState(() {
+        // Convert the structured workout plan to the format expected by the UI
+        _workoutPlan = workoutPlan.toDbJson();
+        _isLoading = false;
+      });
+    } catch (e) {
+      debugPrint('Error loading workout plan: $e');
+      
+      if (!mounted) return;
+      
+      setState(() {
+        _isLoading = false;
+        _errorMessage = 'Failed to load workout plan: $e';
+      });
     }
   }
   
@@ -200,8 +108,8 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
-            onPressed: () => _generateWorkoutPlan(),
-            tooltip: 'Generate new plan',
+            onPressed: () => _loadWorkoutPlan(),
+            tooltip: 'Reload plan',
           ),
         ],
       ),
@@ -258,10 +166,12 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 24),
-            FilledButton.icon(
-              onPressed: _generateWorkoutPlan,
-              icon: const Icon(Icons.auto_awesome),
-              label: const Text('Generate Plan'),
+            OutlinedButton.icon(
+              onPressed: () {
+                Navigator.pushNamed(context, '/profile');
+              },
+              icon: const Icon(Icons.person),
+              label: const Text('Go to Profile to Generate Plan'),
             ),
           ],
         ),
@@ -272,6 +182,49 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
   Widget _buildWorkoutPlanView() {
     return Column(
       children: [
+        // AI Message Card
+        if (_workoutPlan != null && _workoutPlan!['is_generated'] == true)
+          Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Card(
+              color: AppTheme.primaryColor.withOpacity(0.1),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.auto_awesome,
+                          color: AppTheme.primaryColor,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          'AI-Generated Workout Plan',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: AppTheme.primaryColor,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'I\'ve created a personalized workout plan based on your goals and preferences. Feel free to edit any exercise or details to better match your needs!',
+                      style: TextStyle(
+                        color: AppTheme.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        
         // Day selector
         Padding(
           padding: const EdgeInsets.symmetric(vertical: 8),
@@ -280,11 +233,12 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
             child: ListView.builder(
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 16),
-              itemCount: 7,
+              itemCount: _weekdays.length,
               itemBuilder: (context, index) {
+                final workoutType = _workoutTypes[index];
                 return Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 4),
-                  child: _buildDayChip(index),
+                  child: _buildDayChip(index, _weekdays[index], workoutType),
                 );
               },
             ),
@@ -293,18 +247,16 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
         
         // Divider
         const Divider(height: 1),
-                
+        
         // Workout content
         Expanded(
-          child: _selectedDay >= 0 && _selectedDay < 7
-              ? _buildDayWorkout()
-              : const Center(child: Text('Select a day to view workouts')),
+          child: _buildDayWorkout(_getCurrentDayWorkout()),
         ),
       ],
     );
   }
   
-  Widget _buildDayChip(int dayIndex) {
+  Widget _buildDayChip(int dayIndex, String dayName, String workoutType) {
     final isSelected = _selectedDay == dayIndex;
     final isToday = DateTime.now().weekday - 1 == dayIndex;
     
@@ -336,7 +288,7 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Text(
-                _weekdays[dayIndex],
+                dayName,
                 style: TextStyle(
                   fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                   color: isSelected
@@ -346,7 +298,7 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
               ),
               const SizedBox(height: 4),
               Text(
-                _workoutTypes[dayIndex],
+                workoutType,
                 style: TextStyle(
                   fontSize: 12,
                   color: isSelected
@@ -361,181 +313,152 @@ class _WorkoutScreenState extends State<WorkoutScreen> {
     );
   }
   
-  Widget _buildDayWorkout() {
-    final currentDayWorkout = _getCurrentDayWorkout();
-    
-    if (currentDayWorkout == null) {
+  Widget _buildDayWorkout(Map<String, dynamic>? dayWorkout) {
+    if (dayWorkout == null) {
       return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                Icons.hotel,
-                size: 64,
-                color: Colors.grey.withOpacity(0.5),
-              ),
-              const SizedBox(height: 16),
-              Text(
-                'Rest Day',
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Take some time to recover and prepare for your next workout.',
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodyMedium,
-              ),
-            ],
+        child: Text(
+          'Rest Day',
+          style: TextStyle(
+            color: AppTheme.textSecondary,
+            fontSize: 18,
           ),
         ),
       );
     }
+
+    final exercises = dayWorkout['exercises'] as List? ?? [];
     
-    final exercises = currentDayWorkout['exercises'] as List?;
-    
-    return ListView(
+    return ListView.builder(
       padding: const EdgeInsets.all(16),
-      children: [
-        // Day focus area
-        Card(
-          elevation: 0,
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Icon(
-                      Icons.fitness_center,
-                      color: Theme.of(context).colorScheme.primary,
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      currentDayWorkout['focus_area'] ?? 'Workout',
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                  ],
-                ),
-                if (currentDayWorkout['description'] != null) ...[
-                  const SizedBox(height: 8),
-                  Text(
-                    currentDayWorkout['description'],
-                    style: Theme.of(context).textTheme.bodyMedium,
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ),
-        
-        const SizedBox(height: 16),
-        
-        // Exercises
-        if (exercises != null && exercises.isNotEmpty) ...[
-          Text(
-            'Exercises',
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-          const SizedBox(height: 8),
-          ...exercises.map<Widget>((exercise) => _buildExerciseCard(exercise)).toList(),
-        ] else ...[
-          Card(
-            elevation: 0,
+      itemCount: exercises.length,
+      itemBuilder: (context, index) {
+        final exercise = exercises[index];
+        return Card(
+          margin: const EdgeInsets.only(bottom: 16),
+          child: InkWell(
+            onTap: () => _showEditExerciseDialog(exercise),
+            borderRadius: BorderRadius.circular(16),
             child: Padding(
               padding: const EdgeInsets.all(16),
-              child: Center(
-                child: Text(
-                  'No exercises found for this day',
-                  style: Theme.of(context).textTheme.bodyMedium,
-                ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          exercise['exercise_name'] ?? 'Exercise',
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.edit),
+                        onPressed: () => _showEditExerciseDialog(exercise),
+                        tooltip: 'Edit exercise',
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      _buildExerciseDetail(
+                        Icons.repeat,
+                        'Sets',
+                        exercise['sets']?.toString() ?? '0',
+                      ),
+                      const SizedBox(width: 24),
+                      _buildExerciseDetail(
+                        Icons.fitness_center,
+                        'Reps',
+                        exercise['reps']?.toString() ?? '0',
+                      ),
+                    ],
+                  ),
+                  if (exercise['notes']?.isNotEmpty == true) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      exercise['notes'],
+                      style: TextStyle(
+                        color: AppTheme.textSecondary,
+                        fontSize: 14,
+                      ),
+                    ),
+                  ],
+                ],
               ),
             ),
           ),
-        ],
-      ],
+        );
+      },
     );
   }
   
-  Widget _buildExerciseCard(dynamic exercise) {
-    return Card(
-      elevation: 0,
-      margin: const EdgeInsets.only(bottom: 16),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.primary.withOpacity(0.2),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(
-                    Icons.fitness_center,
-                    color: Theme.of(context).colorScheme.primary,
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Text(
-                    exercise['exercise_name'] ?? exercise['name'] ?? 'Exercise',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
-              children: [
-                _buildExerciseDetail('Sets', '${exercise['sets'] ?? '-'}'),
-                _buildExerciseDetail('Reps', '${exercise['reps'] ?? '-'}'),
-                _buildExerciseDetail('Rest', '${exercise['rest_seconds'] ?? 60}s'),
-              ],
-            ),
-            if (exercise['instructions'] != null) ...[
-              const SizedBox(height: 12),
-              const Divider(),
-              const SizedBox(height: 8),
-              Text(
-                'Instructions:',
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                exercise['instructions'] ?? 'No instructions provided',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-  
-  Widget _buildExerciseDetail(String label, String value) {
-    return Column(
+  Widget _buildExerciseDetail(IconData icon, String label, String value) {
+    return Row(
       children: [
-        Text(
-          label,
-          style: Theme.of(context).textTheme.bodySmall,
+        Icon(
+          icon,
+          size: 16,
+          color: AppTheme.textSecondary,
         ),
-        const SizedBox(height: 4),
+        const SizedBox(width: 4),
         Text(
-          value,
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-            fontWeight: FontWeight.bold,
+          '$label: $value',
+          style: TextStyle(
+            color: AppTheme.textSecondary,
+            fontSize: 14,
           ),
         ),
       ],
+    );
+  }
+  
+  void _showEditExerciseDialog(Map<String, dynamic> exercise) {
+    showDialog(
+      context: context,
+      builder: (context) => EditPlanDialog(
+        plan: {'exercise': exercise},
+        isWorkout: true,
+        onSave: (editedPlan) async {
+          try {
+            final editedExercise = editedPlan['exercise'];
+            await supabase
+                .from('workout_exercises')
+                .update({
+                  'exercise_name': editedExercise['exercise_name'],
+                  'sets': editedExercise['sets'],
+                  'reps': editedExercise['reps'],
+                  'notes': editedExercise['notes'],
+                })
+                .eq('id', exercise['id']);
+            
+            // Refresh the workout plan
+            _loadWorkoutPlan();
+            
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Exercise updated successfully'),
+                  behavior: SnackBarBehavior.floating,
+                ),
+              );
+            }
+          } catch (e) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Error updating exercise: $e'),
+                  behavior: SnackBarBehavior.floating,
+                  backgroundColor: Colors.red,
+                ),
+              );
+            }
+          }
+        },
+      ),
     );
   }
 } 

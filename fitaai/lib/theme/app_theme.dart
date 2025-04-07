@@ -5,12 +5,15 @@ import 'package:flutter/services.dart';
 /// https://m3.material.io/
 class AppTheme {
   // Primary color seed
-  static const Color seedColor = Color(0xFF6750A4); // M3 Baseline Purple
+  static const Color seedColor = Color(0xFF87A878); // Sage Green
   
   // Custom color scheme
   static final ColorScheme lightColorScheme = ColorScheme.fromSeed(
     seedColor: seedColor,
     brightness: Brightness.light,
+    primary: seedColor,
+    secondary: Color(0xFF6B8E4E), // Darker sage green
+    tertiary: Color(0xFFA9C19F), // Lighter sage green
   );
   
   // For backwards compatibility with existing code
@@ -35,6 +38,9 @@ class AppTheme {
   static Color get textSecondary => lightColorScheme.onSurfaceVariant;
   static Color get textHint => lightColorScheme.outline;
   static Color get textOnPrimary => lightColorScheme.onPrimary;
+  
+  // Add textColor to AppTheme
+  static Color get textColor => const Color(0xFF333333);
   
   // Common durations for animations
   static const Duration microDuration = Duration(milliseconds: 100);

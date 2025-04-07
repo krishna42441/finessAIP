@@ -223,7 +223,8 @@ class _QuickLogWidgetState extends State<QuickLogWidget> with SingleTickerProvid
   void _showWeightLogDialog(BuildContext context) {
     final weightController = TextEditingController();
     final notesController = TextEditingController();
-    final formKey = GlobalKey<FormState>();
+    // Create a new key each time the dialog is shown
+    final formKey = GlobalKey<FormState>(debugLabel: 'weightFormKey_${DateTime.now().millisecondsSinceEpoch}');
     
     // Use Motion Utils fade scale transition for dialogs
     Navigator.of(context).push(
@@ -330,7 +331,8 @@ class _QuickLogWidgetState extends State<QuickLogWidget> with SingleTickerProvid
   
   void _showWaterLogDialog(BuildContext context) {
     final waterController = TextEditingController();
-    final formKey = GlobalKey<FormState>();
+    // Create a new key each time the dialog is shown
+    final formKey = GlobalKey<FormState>(debugLabel: 'waterFormKey_${DateTime.now().millisecondsSinceEpoch}');
     final colorScheme = Theme.of(context).colorScheme;
     
     // Use Motion Utils fade scale transition for dialogs
@@ -453,11 +455,12 @@ class _QuickLogWidgetState extends State<QuickLogWidget> with SingleTickerProvid
   }
   
   void _showWorkoutLogDialog(BuildContext context) {
-    final typeController = TextEditingController();
+    final workoutNameController = TextEditingController();
     final durationController = TextEditingController();
     final caloriesController = TextEditingController();
     final notesController = TextEditingController();
-    final formKey = GlobalKey<FormState>();
+    // Create a new key each time the dialog is shown
+    final formKey = GlobalKey<FormState>(debugLabel: 'workoutFormKey_${DateTime.now().millisecondsSinceEpoch}');
     final colorScheme = Theme.of(context).colorScheme;
     
     // Predefined workout types
@@ -511,7 +514,7 @@ class _QuickLogWidgetState extends State<QuickLogWidget> with SingleTickerProvid
                     }).toList(),
                     onChanged: (value) {
                       if (value != null) {
-                        typeController.text = value;
+                        workoutNameController.text = value;
                       }
                     },
                     validator: (value) {
@@ -569,7 +572,7 @@ class _QuickLogWidgetState extends State<QuickLogWidget> with SingleTickerProvid
             FilledButton.icon(
               onPressed: () async {
                 if (formKey.currentState!.validate() && userId != null) {
-                  final workoutType = typeController.text;
+                  final workoutType = workoutNameController.text;
                   final duration = int.parse(durationController.text);
                   final calories = caloriesController.text.isNotEmpty 
                       ? int.parse(caloriesController.text) 
@@ -621,7 +624,8 @@ class _QuickLogWidgetState extends State<QuickLogWidget> with SingleTickerProvid
     final carbsController = TextEditingController();
     final fatController = TextEditingController();
     final notesController = TextEditingController();
-    final formKey = GlobalKey<FormState>();
+    // Create a new key each time the dialog is shown
+    final formKey = GlobalKey<FormState>(debugLabel: 'nutritionFormKey_${DateTime.now().millisecondsSinceEpoch}');
     final colorScheme = Theme.of(context).colorScheme;
     
     // Predefined meal types

@@ -6,6 +6,9 @@ import 'package:flutter/rendering.dart';
 import '../services/n8n_service.dart';
 import '../services/gemini_service.dart';
 import '../main.dart';
+import '../widgets/edit_plan_dialog.dart';
+import '../models/plan_models.dart';
+import '../services/plan_service.dart';
 
 class NutritionScreen extends StatefulWidget {
   const NutritionScreen({super.key});
@@ -21,6 +24,8 @@ class _NutritionScreenState extends State<NutritionScreen> {
   String? _errorMessage;
   bool _isGenerating = false;
   int _selectedDayIndex = 0;
+  bool _hasNutritionPlan = true;
+  Map<String, dynamic>? _workoutPlan;
   
   // Add weekdays array like in the workout screen
   final List<String> _weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -31,57 +36,51 @@ class _NutritionScreenState extends State<NutritionScreen> {
     _loadNutritionPlan();
   }
   
+  /// Load the nutrition plan from the database
   Future<void> _loadNutritionPlan() async {
-    if (!mounted) return;
+    if (_isLoading) return;
     
     setState(() {
       _isLoading = true;
     });
     
-    final userId = supabase.auth.currentUser?.id;
-    if (userId == null) {
-      if (!mounted) return;
-      
-      setState(() {
-        _isLoading = false;
-      });
-      
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('User not authenticated'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      return;
-    }
-    
     try {
-      // Use GeminiService instead of N8NService
-      final plan = await GeminiService.getLatestNutritionPlan(userId);
+      // Get user ID
+      final userId = supabase.auth.currentUser?.id;
+      if (userId == null) {
+        setState(() {
+          _isLoading = false;
+          _hasNutritionPlan = false;
+        });
+        return;
+      }
       
-      if (!mounted) return;
+      // Load nutrition plan
+      final nutritionPlan = await PlanService.getNutritionPlan(userId);
+      
+      // Load workout plan to get workout information
+      final workoutPlan = await PlanService.getWorkoutPlan(userId);
       
       setState(() {
-        _nutritionPlan = plan;
-        // Set the initial selected day to today's weekday index
-        _selectedDayIndex = _findTodayIndex(plan);
+        // Convert to Map<String, dynamic> for easier access
+        _nutritionPlan = nutritionPlan?.toDbJson();
+        _workoutPlan = workoutPlan?.toDbJson();
+        _hasNutritionPlan = nutritionPlan != null;
         _isLoading = false;
+        
+        // Set day to today if not already set
+        if (_selectedDayIndex == 0 && _nutritionPlan != null) {
+          final now = DateTime.now();
+          // Convert from 1-7 day of week to 0-6 index
+          _selectedDayIndex = now.weekday - 1;
+        }
       });
     } catch (e) {
       debugPrint('Error loading nutrition plan: $e');
-      
-      if (!mounted) return;
-      
       setState(() {
         _isLoading = false;
+        _hasNutritionPlan = false;
       });
-      
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to load nutrition plan: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
     }
   }
 
@@ -102,117 +101,6 @@ class _NutritionScreenState extends State<NutritionScreen> {
     return 0; // Default to first day if today not found
   }
   
-  void _showGeneratePlanDialog() {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        title: const Text('No Nutrition Plan Found'),
-        content: const Text('Would you like to generate a personalized nutrition plan based on your profile?'),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              setState(() {
-                _isGenerating = false;
-                _errorMessage = 'No nutrition plan available';
-              });
-            },
-            child: const Text('Not Now'),
-          ),
-          FilledButton(
-            onPressed: () {
-              Navigator.pop(context);
-              _generateNutritionPlan();
-            },
-            child: const Text('Generate Plan'),
-          ),
-        ],
-      ),
-    );
-  }
-  
-  Future<void> _generateNutritionPlan() async {
-    if (!mounted) return;
-    
-    setState(() {
-      _isGenerating = true;
-    });
-    
-    final userId = supabase.auth.currentUser?.id;
-    if (userId == null) {
-      if (!mounted) return;
-      
-      setState(() {
-        _isGenerating = false;
-      });
-      
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('User not authenticated'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      return;
-    }
-    
-    try {
-      // Use GeminiService instead of N8NService
-      final result = await GeminiService.generatePlans(userId);
-      
-      if (!mounted) return;
-      
-      if (result['success'] == true) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Nutrition plan generated successfully!'),
-            backgroundColor: Colors.green,
-          ),
-        );
-        
-        // Reload nutrition plan
-        await _loadNutritionPlan();
-      } else {
-        throw Exception(result['message']);
-      }
-    } catch (e) {
-      debugPrint('Error with Gemini: $e');
-      
-      // If Gemini fails, try the mock data generation
-      try {
-        final mockResult = await N8NService.generateMockNutritionPlan(userId);
-        
-        if (!mounted) return;
-        
-        if (mockResult != null) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Generated fallback nutrition plan'),
-              backgroundColor: Colors.orange,
-            ),
-          );
-          
-          await _loadNutritionPlan();
-        }
-      } catch (mockError) {
-        if (!mounted) return;
-        
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to generate nutrition plan: $mockError'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isGenerating = false;
-        });
-      }
-    }
-  }
-  
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -223,8 +111,8 @@ class _NutritionScreenState extends State<NutritionScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
-            onPressed: () => _generateNutritionPlan(),
-            tooltip: 'Generate new plan',
+            onPressed: () => _loadNutritionPlan(),
+            tooltip: 'Reload plan',
           ),
         ],
       ),
@@ -276,15 +164,17 @@ class _NutritionScreenState extends State<NutritionScreen> {
             ),
             const SizedBox(height: 8),
             Text(
-              'Generate a personalized nutrition plan based on your profile',
+              'Generate a personalized nutrition plan from your profile',
               style: Theme.of(context).textTheme.bodyMedium,
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 24),
-            FilledButton.icon(
-              onPressed: _generateNutritionPlan,
-              icon: const Icon(Icons.auto_awesome),
-              label: const Text('Generate Plan'),
+            OutlinedButton.icon(
+              onPressed: () {
+                Navigator.pushNamed(context, '/profile');
+              },
+              icon: const Icon(Icons.person),
+              label: const Text('Go to Profile to Generate Plan'),
             ),
           ],
         ),
@@ -293,109 +183,204 @@ class _NutritionScreenState extends State<NutritionScreen> {
   }
   
   Widget _buildNutritionPlanView() {
-    return Column(
-      children: [
-        // Day selector
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          child: SizedBox(
-            height: 64,
+    return SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SizedBox(height: 16),
+          // Day selector
+          SizedBox(
+            height: 50,
             child: ListView.builder(
               scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              itemCount: _nutritionPlan?['days']?.length ?? 0,
+              itemCount: 7,
               itemBuilder: (context, index) {
-                final day = _nutritionPlan?['days'][index];
-                final dayNumber = day['day_of_week'];
-                // Convert from 1-indexed (database) to 0-indexed (array)
-                final weekdayIndex = dayNumber - 1;
-                final dayName = weekdayIndex >= 0 && weekdayIndex < _weekdays.length 
-                    ? _weekdays[weekdayIndex] 
-                    : 'Day';
-                
-                return Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 4),
-                  child: _buildDayChip(index, dayName, dayNumber),
-                );
+                return _buildDayChip(index + 1);
               },
             ),
           ),
-        ),
-        
-        // Divider
-        const Divider(height: 1),
-                
-        // Nutrition content
-        Expanded(
-          child: _nutritionPlan?['days'] != null && 
-                 _nutritionPlan!['days'].isNotEmpty &&
-                 _selectedDayIndex < _nutritionPlan!['days'].length
-              ? _buildDayNutrition(_nutritionPlan!['days'][_selectedDayIndex])
-              : const Center(child: Text('No nutrition plan for this day')),
-        ),
-      ],
+          const SizedBox(height: 16),
+          
+          // Card with AI-generated nutrition plan
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16.0),
+            child: Card(
+              elevation: 4,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.lightbulb_outline, 
+                          color: AppTheme.accentColor, size: 24),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'AI-Generated Nutrition Plan',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: AppTheme.primaryColor,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Based on your profile and workout plan, here are your personalized nutrition targets for each day of the week.',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: Colors.grey[700],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    _buildDayNutrition(),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          
+          const SizedBox(height: 24),
+          
+          // Hydration card
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16.0),
+            child: Card(
+              elevation: 4,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.water_drop_outlined, 
+                          color: Colors.blue, size: 24),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Hydration',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: AppTheme.primaryColor,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    _buildHydrationRecommendation(),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          
+          const SizedBox(height: 24),
+          
+          // Micronutrients and tips card
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16.0),
+            child: Card(
+              elevation: 4,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.health_and_safety_outlined, 
+                          color: Colors.green, size: 24),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Key Micronutrients & Tips',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: AppTheme.primaryColor,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    _buildMicronutrientsAndTips(),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          
+          const SizedBox(height: 24),
+        ],
+      ),
     );
   }
   
-  Widget _buildDayChip(int dayIndex, String dayName, int dayNumber) {
-    final isSelected = _selectedDayIndex == dayIndex;
+  Widget _buildDayChip(int dayOfWeek) {
+    final isSelected = dayOfWeek == _selectedDayIndex + 1;
+    final dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    final workoutType = _getWorkoutTypeForDay(dayOfWeek);
+    final isWorkoutDay = workoutType != 'Rest' && workoutType != 'No workout';
     
-    // Calculate today based on day_of_week like the workout screen
-    // Weekday in DateTime is 1-7, where 1 is Monday and 7 is Sunday
-    // day_of_week from database is also 1-7 with same mapping
-    final isToday = DateTime.now().weekday == dayNumber;
-    
-    // Calculate date based on day number (similar to workout screen approach)
-    final now = DateTime.now();
-    final int daysToAdd = dayNumber - now.weekday;
-    final dayDate = now.add(Duration(days: daysToAdd));
-    
-    return Material(
-      color: Colors.transparent,
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4.0),
       child: InkWell(
         onTap: () {
           setState(() {
-            _selectedDayIndex = dayIndex;
+            _selectedDayIndex = dayOfWeek - 1;
           });
         },
-        borderRadius: BorderRadius.circular(16),
         child: Container(
-          width: 90,
-          padding: const EdgeInsets.symmetric(vertical: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
           decoration: BoxDecoration(
-            color: isSelected
-                ? Theme.of(context).colorScheme.primaryContainer
-                : Colors.transparent,
-            borderRadius: BorderRadius.circular(16),
+            color: isSelected 
+                ? AppTheme.primaryColor 
+                : (isWorkoutDay ? Colors.grey[200] : Colors.white),
+            borderRadius: BorderRadius.circular(20.0),
             border: Border.all(
-              color: isToday
-                  ? Theme.of(context).colorScheme.primary
-                  : Colors.transparent,
-              width: 2,
+              color: isSelected 
+                  ? AppTheme.primaryColor 
+                  : Colors.grey[300]!,
+              width: 1.5,
             ),
           ),
           child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                dayName,
+                dayNames[dayOfWeek - 1],
                 style: TextStyle(
+                  color: isSelected ? Colors.white : Colors.black87,
                   fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                  color: isSelected
-                      ? Theme.of(context).colorScheme.onPrimaryContainer
-                      : null,
                 ),
               ),
-              const SizedBox(height: 4),
-              Text(
-                '${dayDate.day}/${dayDate.month}',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: isSelected
-                      ? Theme.of(context).colorScheme.onPrimaryContainer
-                      : Theme.of(context).textTheme.bodySmall?.color,
+              if (isWorkoutDay && !isSelected)
+                Container(
+                  margin: const EdgeInsets.only(top: 2),
+                  width: 6,
+                  height: 6,
+                  decoration: BoxDecoration(
+                    color: AppTheme.accentColor,
+                    shape: BoxShape.circle,
+                  ),
                 ),
-              ),
             ],
           ),
         ),
@@ -403,141 +388,275 @@ class _NutritionScreenState extends State<NutritionScreen> {
     );
   }
   
-  Widget _buildDayNutrition(Map<String, dynamic> dayData) {
-    final meals = dayData['meals'] as List?;
+  Widget _buildDayNutrition() {
+    if (_nutritionPlan == null || !(_nutritionPlan!.containsKey('days'))) {
+      return const Center(
+        child: Text('No nutrition data available for this day'),
+      );
+    }
+
+    // Find the selected day's nutrition data
+    Map<String, dynamic>? dayData;
+    for (var day in _nutritionPlan!['days']) {
+      if (day['day_of_week'] == _selectedDayIndex + 1) {
+        dayData = Map<String, dynamic>.from(day);
+        break;
+      }
+    }
+
+    if (dayData == null) {
+      return const Center(
+        child: Text('No nutrition data available for this day'),
+      );
+    }
+
+    // Get the workout type for this day
+    final workoutType = _getWorkoutTypeForDay(_selectedDayIndex + 1);
+    final isWorkoutDay = workoutType != 'Rest' && workoutType != 'No workout';
     
-    return ListView(
-      padding: const EdgeInsets.all(16),
+    // Get nutrition data
+    final totalCalories = dayData['total_calories'] ?? 0;
+    final totalProtein = dayData['total_protein'] ?? 0;
+    final totalCarbs = dayData['total_carbs'] ?? 0;
+    final totalFat = dayData['total_fat'] ?? 0;
+    final mealTiming = dayData['meal_timing_recommendation'] ?? 'No specific recommendations';
+    final specialRecommendations = dayData['special_recommendations'] ?? '';
+
+    // Calculate percentages for macros
+    final totalMacroGrams = totalProtein + totalCarbs + totalFat;
+    final proteinPct = totalMacroGrams > 0 ? (totalProtein / totalMacroGrams * 100).round() : 0;
+    final carbsPct = totalMacroGrams > 0 ? (totalCarbs / totalMacroGrams * 100).round() : 0;
+    final fatPct = totalMacroGrams > 0 ? (totalFat / totalMacroGrams * 100).round() : 0;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Nutrition summary
-        Card(
-          elevation: 0,
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Daily Summary',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 16),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceAround,
-                  children: [
-                    _buildNutrientSummary('Calories', '${dayData['total_calories'] ?? 0}', 'kcal'),
-                    _buildNutrientSummary('Protein', '${dayData['total_protein'] ?? 0}', 'g'),
-                    _buildNutrientSummary('Carbs', '${dayData['total_carbs'] ?? 0}', 'g'),
-                    _buildNutrientSummary('Fat', '${dayData['total_fat'] ?? 0}', 'g'),
-                  ],
-                ),
-              ],
+        // Day title with workout type
+        Row(
+          children: [
+            Text(
+              _getDayName(_selectedDayIndex + 1),
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: AppTheme.textColor,
+              ),
             ),
-          ),
-        ),
-        
-        const SizedBox(height: 16),
-        
-        // Macronutrient Breakdown
-        Card(
-          elevation: 0,
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Macronutrient Breakdown',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 16),
-                _buildMacroProgressBar(
-                  'Protein', 
-                  dayData['total_protein'] ?? 0, 
-                  (dayData['protein_goal'] ?? 150).toDouble(), 
-                  Colors.red
-                ),
-                const SizedBox(height: 12),
-                _buildMacroProgressBar(
-                  'Carbs', 
-                  dayData['total_carbs'] ?? 0, 
-                  (dayData['carbs_goal'] ?? 250).toDouble(), 
-                  Colors.green
-                ),
-                const SizedBox(height: 12),
-                _buildMacroProgressBar(
-                  'Fat', 
-                  dayData['total_fat'] ?? 0, 
-                  (dayData['fat_goal'] ?? 80).toDouble(), 
-                  Colors.blue
-                ),
-                const SizedBox(height: 12),
-                _buildMacroProgressBar(
-                  'Fiber', 
-                  dayData['total_fiber'] ?? 0, 
-                  (dayData['fiber_goal'] ?? 35).toDouble(), 
-                  Colors.brown
-                ),
-              ],
-            ),
-          ),
-        ),
-        
-        const SizedBox(height: 16),
-        
-        // Micronutrients
-        Card(
-          elevation: 0,
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Micronutrients',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 16),
-                Wrap(
-                  spacing: 12,
-                  runSpacing: 12,
-                  children: [
-                    _buildMicronutrientChip('Vitamin A', '${dayData['vitamin_a'] ?? 800} μg'),
-                    _buildMicronutrientChip('Vitamin C', '${dayData['vitamin_c'] ?? 90} mg'),
-                    _buildMicronutrientChip('Vitamin D', '${dayData['vitamin_d'] ?? 15} μg'),
-                    _buildMicronutrientChip('Calcium', '${dayData['calcium'] ?? 1000} mg'),
-                    _buildMicronutrientChip('Iron', '${dayData['iron'] ?? 18} mg'),
-                    _buildMicronutrientChip('Potassium', '${dayData['potassium'] ?? 3500} mg'),
-                    _buildMicronutrientChip('Magnesium', '${dayData['magnesium'] ?? 400} mg'),
-                    _buildMicronutrientChip('Zinc', '${dayData['zinc'] ?? 11} mg'),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ),
-        
-        const SizedBox(height: 16),
-        
-        // Meals
-        if (meals != null && meals.isNotEmpty) ...[
-          Text(
-            'Meals',
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-          const SizedBox(height: 8),
-          ...meals.map<Widget>((meal) => _buildMealCard(meal)).toList(),
-        ] else ...[
-          Card(
-            elevation: 0,
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Center(
-                child: Text(
-                  'No meals found for this day',
-                  style: Theme.of(context).textTheme.bodyMedium,
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              decoration: BoxDecoration(
+                color: isWorkoutDay ? AppTheme.accentColor.withOpacity(0.2) : Colors.grey[200],
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                workoutType,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  color: isWorkoutDay ? AppTheme.accentColor : Colors.grey[600],
                 ),
               ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        
+        // Calories target
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              'Total Daily Calories',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w500,
+                color: AppTheme.textColor,
+              ),
+            ),
+            Text(
+              '$totalCalories kcal',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: AppTheme.accentColor,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        
+        // Macronutrients
+        Text(
+          'Macronutrients',
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w500,
+            color: AppTheme.textColor,
+          ),
+        ),
+        const SizedBox(height: 8),
+        
+        // Protein
+        Row(
+          children: [
+            Container(
+              width: 16,
+              height: 16,
+              decoration: BoxDecoration(
+                color: Colors.red[400],
+                shape: BoxShape.circle,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Protein',
+                style: TextStyle(
+                  fontSize: 14,
+                  color: AppTheme.textColor,
+                ),
+              ),
+            ),
+            Text(
+              '$totalProtein g ($proteinPct%)',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+                color: AppTheme.textColor,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        
+        // Carbs
+        Row(
+          children: [
+            Container(
+              width: 16,
+              height: 16,
+              decoration: BoxDecoration(
+                color: Colors.blue[400],
+                shape: BoxShape.circle,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Carbohydrates',
+                style: TextStyle(
+                  fontSize: 14,
+                  color: AppTheme.textColor,
+                ),
+              ),
+            ),
+            Text(
+              '$totalCarbs g ($carbsPct%)',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+                color: AppTheme.textColor,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        
+        // Fat
+        Row(
+          children: [
+            Container(
+              width: 16,
+              height: 16,
+              decoration: BoxDecoration(
+                color: Colors.yellow[700],
+                shape: BoxShape.circle,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Fat',
+                style: TextStyle(
+                  fontSize: 14,
+                  color: AppTheme.textColor,
+                ),
+              ),
+            ),
+            Text(
+              '$totalFat g ($fatPct%)',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+                color: AppTheme.textColor,
+              ),
+            ),
+          ],
+        ),
+        
+        // Macro distribution visual
+        const SizedBox(height: 12),
+        Container(
+          height: 16,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(8),
+          ),
+          clipBehavior: Clip.hardEdge,
+          child: Row(
+            children: [
+              Expanded(
+                flex: proteinPct,
+                child: Container(color: Colors.red[400]),
+              ),
+              Expanded(
+                flex: carbsPct,
+                child: Container(color: Colors.blue[400]),
+              ),
+              Expanded(
+                flex: fatPct,
+                child: Container(color: Colors.yellow[700]),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        
+        // Meal timing recommendation
+        Text(
+          'Meal Timing',
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w500,
+            color: AppTheme.textColor,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          mealTiming,
+          style: TextStyle(
+            fontSize: 14,
+            color: AppTheme.textColor,
+          ),
+        ),
+        
+        // Special recommendation if available
+        if (specialRecommendations.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          Text(
+            'Special Recommendations',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w500,
+              color: AppTheme.textColor,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            specialRecommendations,
+            style: TextStyle(
+              fontSize: 14,
+              color: AppTheme.textColor,
             ),
           ),
         ],
@@ -545,217 +664,198 @@ class _NutritionScreenState extends State<NutritionScreen> {
     );
   }
   
-  Widget _buildNutrientSummary(String label, String value, String unit) {
-    return Column(
-      children: [
-        Text(
-          label,
-          style: Theme.of(context).textTheme.bodySmall,
-        ),
-        const SizedBox(height: 4),
-        Text(
-          value,
-          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        Text(
-          unit,
-          style: Theme.of(context).textTheme.bodySmall,
-        ),
-      ],
-    );
-  }
-  
-  Widget _buildMacroProgressBar(String label, num current, double goal, Color color) {
-    final progress = (current / goal).clamp(0.0, 1.0);
+  Widget _buildHydrationRecommendation() {
+    if (_nutritionPlan == null || !(_nutritionPlan!.containsKey('days'))) {
+      return const Text('No hydration data available');
+    }
+
+    // Find the selected day's nutrition data
+    Map<String, dynamic>? dayData;
+    for (var day in _nutritionPlan!['days']) {
+      if (day['day_of_week'] == _selectedDayIndex + 1) {
+        dayData = Map<String, dynamic>.from(day);
+        break;
+      }
+    }
+
+    if (dayData == null) {
+      return const Text('No hydration data available');
+    }
+
+    final hydrationNeeds = dayData['hydration_needs'] ?? '2.5-3 liters';
+    final workoutIntensity = dayData['workout_intensity'] ?? 'Medium';
     
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              label,
-              style: Theme.of(context).textTheme.bodyMedium,
-            ),
-            Text(
-              '$current / ${goal.toInt()} g',
-              style: Theme.of(context).textTheme.bodyMedium,
+            Icon(Icons.water_drop, color: Colors.blue, size: 20),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Recommended water intake: $hydrationNeeds',
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w500,
+                  color: AppTheme.textColor,
+                ),
+              ),
             ),
           ],
         ),
-        const SizedBox(height: 4),
-        LinearProgressIndicator(
-          value: progress,
-          backgroundColor: Colors.grey.withOpacity(0.2),
-          valueColor: AlwaysStoppedAnimation<Color>(color),
-          minHeight: 8,
-          borderRadius: BorderRadius.circular(4),
+        const SizedBox(height: 12),
+        Text(
+          workoutIntensity == 'High'
+              ? 'Ensure proper hydration before, during, and after your high-intensity workout. Consider adding electrolytes on heavy training days.'
+              : (workoutIntensity == 'Medium-High' 
+                  ? 'Drink water throughout the day, with extra fluid intake around your workout session.'
+                  : 'Maintain consistent water intake throughout the day.'),
+          style: TextStyle(
+            fontSize: 14,
+            color: Colors.grey[700],
+          ),
         ),
       ],
     );
   }
   
-  Widget _buildMicronutrientChip(String label, String value) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.primaryContainer.withOpacity(0.3),
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Column(
-        children: [
-          Text(
-            label,
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-          Text(
-            value,
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-  
-  Widget _buildMealCard(Map<String, dynamic> meal) {
-    final foods = meal['foods'] as List?;
-    final mealType = meal['meal_type'] ?? 'Meal';
-    final calories = meal['calories'] ?? 0;
-    final protein = meal['protein'] ?? 0;
-    final carbs = meal['carbs'] ?? 0;
-    final fat = meal['fat'] ?? 0;
+  Widget _buildMicronutrientsAndTips() {
+    if (_nutritionPlan == null || !(_nutritionPlan!.containsKey('days'))) {
+      return const Text('No micronutrient data available');
+    }
+
+    // Find the selected day's nutrition data
+    Map<String, dynamic>? dayData;
+    for (var day in _nutritionPlan!['days']) {
+      if (day['day_of_week'] == _selectedDayIndex + 1) {
+        dayData = Map<String, dynamic>.from(day);
+        break;
+      }
+    }
+
+    if (dayData == null) {
+      return const Text('No micronutrient data available');
+    }
+
+    final keyMicronutrients = dayData['key_micronutrients'] ?? [];
+    final workoutType = _getWorkoutTypeForDay(_selectedDayIndex + 1);
     
-    return Card(
-      elevation: 0,
-      margin: const EdgeInsets.only(bottom: 16),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+    // Default tips based on workout type
+    String nutritionTip = '';
+    if (workoutType.contains('Strength') || workoutType.contains('Push') || 
+        workoutType.contains('Pull') || workoutType.contains('Legs')) {
+      nutritionTip = 'Focus on protein consumption and carb timing for optimal muscle recovery.';
+    } else if (workoutType.contains('Cardio') || workoutType.contains('HIIT')) {
+      nutritionTip = 'Prioritize carbohydrates for energy and rapid glycogen replenishment post-workout.';
+    } else if (workoutType.contains('Rest')) {
+      nutritionTip = 'Lower your carbohydrate intake slightly on rest days while maintaining protein levels.';
+    } else {
+      nutritionTip = 'Balance all macronutrients for optimal energy and recovery.';
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Micronutrients
+        Text(
+          'Key Micronutrients to Focus On:',
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w500,
+            color: AppTheme.textColor,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
           children: [
-            Row(
-              children: [
-                Icon(
-                  _getMealIcon(mealType),
-                  color: Theme.of(context).colorScheme.primary,
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  mealType,
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const Spacer(),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Text(
-                      '$calories kcal',
-                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                        color: Theme.of(context).colorScheme.primary,
+            if (keyMicronutrients is List && keyMicronutrients.isNotEmpty)
+              ...keyMicronutrients.map((nutrient) => Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.green[100],
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: Colors.green[300]!, width: 1),
+                    ),
+                    child: Text(
+                      nutrient.toString(),
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Colors.green[800],
                       ),
                     ),
-                    Text(
-                      'P: ${protein}g  C: ${carbs}g  F: ${fat}g',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                  ],
+                  ))
+            else
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.grey[100],
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: Colors.grey[300]!, width: 1),
                 ),
-              ],
-            ),
-            if (foods != null && foods.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              const Divider(),
-              ...foods.map<Widget>((food) => _buildFoodItem(food)).toList(),
-            ],
+                child: Text(
+                  'General vitamins & minerals',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: Colors.grey[700],
+                  ),
+                ),
+              ),
           ],
         ),
-      ),
+        const SizedBox(height: 16),
+        
+        // Workout-specific nutrition tip
+        Text(
+          'Nutrition Tip for ${workoutType != 'Rest' ? workoutType : 'Rest Day'}:',
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w500,
+            color: AppTheme.textColor,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          nutritionTip,
+          style: TextStyle(
+            fontSize: 14,
+            color: Colors.grey[700],
+          ),
+        ),
+      ],
     );
   }
   
-  IconData _getMealIcon(String mealType) {
-    switch (mealType) {
-      case 'Breakfast':
-        return Icons.breakfast_dining;
-      case 'Lunch':
-        return Icons.lunch_dining;
-      case 'Dinner':
-        return Icons.dinner_dining;
-      case 'Snack':
-        return Icons.cookie;
-      default:
-        return Icons.restaurant;
+  String _getDayName(int dayOfWeek) {
+    switch (dayOfWeek) {
+      case 1: return 'Monday';
+      case 2: return 'Tuesday';
+      case 3: return 'Wednesday';
+      case 4: return 'Thursday';
+      case 5: return 'Friday';
+      case 6: return 'Saturday';
+      case 7: return 'Sunday';
+      default: return 'Unknown';
     }
   }
   
-  Widget _buildFoodItem(Map<String, dynamic> food) {
-    final foodName = food['food_name'] ?? food['name'] ?? 'Unknown Food';
-    final servingSize = food['serving_size'] ?? food['amount'] ?? '';
-    final calories = food['calories'] ?? 0;
-    final protein = food['protein'] ?? 0;
-    final carbs = food['carbs'] ?? 0;
-    final fat = food['fat'] ?? 0;
+  String _getWorkoutTypeForDay(int dayOfWeek) {
+    if (_nutritionPlan == null || 
+        _nutritionPlan!['workout_days'] == null ||
+        (_nutritionPlan!['workout_days'] as List).isEmpty) {
+      return 'No workout';
+    }
     
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.primaryContainer.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Center(
-              child: Text(
-                foodName.isNotEmpty ? foodName.substring(0, 1).toUpperCase() : '?',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  color: Theme.of(context).colorScheme.primary,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  foodName,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                if (servingSize.isNotEmpty)
-                  Text(
-                    servingSize,
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-              ],
-            ),
-          ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                '$calories kcal',
-                style: Theme.of(context).textTheme.bodyMedium,
-              ),
-              Text(
-                'P: ${protein}g  C: ${carbs}g  F: ${fat}g',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
+    // Find the workout for this day
+    for (var day in _nutritionPlan!['workout_days']) {
+      if (day['day_of_week'] == dayOfWeek) {
+        return day['workout_type'] ?? 'Rest';
+      }
+    }
+    
+    return 'Rest';
   }
 } 

@@ -15,6 +15,9 @@ import 'package:flutter/foundation.dart';
 import 'utils/display_utils.dart';
 import 'utils/performance_utils.dart';
 import 'utils/motion_utils.dart';
+import 'services/setup_database.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'services/cache_service.dart';
 
 // Global Supabase client
 late final SupabaseClient supabase;
@@ -22,8 +25,14 @@ late final SupabaseClient supabase;
 // Global navigation key
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
-void main() async {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  
+  // Load environment variables
+  await dotenv.load(fileName: ".env");
+  if (dotenv.env['SUPABASE_URL'] == null || dotenv.env['SUPABASE_ANON_KEY'] == null) {
+    print('Warning: Supabase configuration is missing in .env file');
+  }
   
   // Apply system-wide settings
   SystemChrome.setSystemUIOverlayStyle(
@@ -44,10 +53,29 @@ void main() async {
   
   // Initialize Supabase
   await Supabase.initialize(
-    url: 'https://ynpiumbjcjybrcovxzlx.supabase.co',
-    anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlucGl1bWJqY2p5YnJjb3Z4emx4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDI2NzkxODksImV4cCI6MjA1ODI1NTE4OX0.td_4LhAXlwCJuayO8O8SLnkDiEusetgzl8hAXu-ss6s',
-    debug: true, // Enable debug logs for auth issues
+    url: dotenv.env['SUPABASE_URL'] ?? '',
+    anonKey: dotenv.env['SUPABASE_ANON_KEY'] ?? '',
   );
+  
+  // Setup database if needed
+  final supabaseClient = Supabase.instance.client;
+  final dbSetup = DatabaseSetup(supabaseClient);
+  
+  // Only try to check/initialize if user is logged in
+  if (supabaseClient.auth.currentUser != null) {
+    try {
+      bool isSetup = await dbSetup.checkDatabaseSetup();
+      if (!isSetup) {
+        print('Database needs setup. Please run the setup commands manually as admin.');
+        // Note: We don't auto-initialize as it requires admin privileges
+      }
+    } catch (e) {
+      print('Error checking database setup: $e');
+    }
+  }
+  
+  // Initialize caching service
+  await CacheService.initialize();
   
   if (kDebugMode) {
     print("Supabase initialized with debug mode enabled");

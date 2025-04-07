@@ -45,6 +45,11 @@ dependencies:
   syncfusion_flutter_charts: ^29.1.33
   numberpicker: ^2.1.2
   intl: ^0.20.2
+  flutter_dotenv: ^5.0.2
+  path_provider: ^2.1.2
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+  built_value: ^8.9.5
 
 dev_dependencies:
   flutter_test:
@@ -69,7 +74,10 @@ flutter:
   uses-material-design: true
 
   # To add assets to your application, add an assets section, like this:
-  # assets:
+  assets:
+    - .env
+    - assets/db_setup.sql
+    # - assets/images/
   #   - images/a_dot_burr.jpeg
   #   - images/a_dot_ham.jpeg
 
